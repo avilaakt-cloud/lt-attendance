@@ -75,7 +75,8 @@ input,select{font-size:16px;min-height:48px}
 .wrap:has(.tabs){padding-bottom:96px}
 .dock{position:fixed;left:0;right:0;bottom:0;margin:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:#fffffff2;backdrop-filter:blur(8px);border-top:3px solid var(--gold);z-index:5}
 .dock .btn{min-height:64px;font-size:1.15rem}
-.wrap:has(+ .dock){padding-bottom:118px}
+.wrap:has(+ .dock){padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+.ov{position:fixed;inset:0;background:#000a;display:grid;place-items:center;padding:16px;z-index:20}.ov .card{width:min(420px,100%);margin:0}
 .badge{font-size:1.05rem;padding:16px 14px}
 #toast{bottom:calc(92px + env(safe-area-inset-bottom))}
 @media(min-width:760px){.dock,.tabs{left:50%;right:auto;width:min(760px,100%);transform:translateX(-50%);border-radius:14px 14px 0 0}}
@@ -114,7 +115,7 @@ onAuthStateChanged(auth,async u=>{
  const s=await getDoc(doc(db,'users',u.uid));
  if(!s.exists()){await signOut(auth);return loginView('No access: your account has no profile. Contact your admin.')}
  me={uid:u.uid,...s.data()};
- const f=await getDoc(doc(db,'settings','facility'));fac=f.exists()?f.data():{};
+ await loadCfg();
  me.role==='admin'?adminView():empView();
 });
 function loginView(err=''){
@@ -126,50 +127,66 @@ function loginView(err=''){
 const header=r=>`<div class="top"><img src="logo.png" alt=""><b>${esc(me.name)}<small>${r} · Little Trikes Academy</small></b><button class="btn sm" onclick="signOutNow()">Sign out</button></div>`;
 W({signOutNow:()=>signOut(auth)});
 
-/* ---------- Status logic ---------- */
-const inStatus=(ms,start)=>mins(new Date(ms))>tm(start)+GRACE?'Late':'On Time';
-const outStatus=(ms,end)=>mins(new Date(ms))<tm(end)?'Early Out':'Completed';
+/* ---------- Rules, status & verification ---------- */
+let rules={grace:15,breakMin:60,mode:'either'},branches=[],retries=0,first=null;const T0=Date.now();
+async function loadCfg(){const r=await getDoc(doc(db,'settings','rules'));rules={...rules,...(r.exists()?r.data():{})};
+ branches=(await getDocs(collection(db,'branches'))).docs.map(d=>({id:d.id,...d.data()}))}
 const cls=r=>!r?'':r.outStatus==='Early Out'?'s-early':r.inStatus==='Late'?'s-late':'s-on';
-
-/* ---------- Presence verification ---------- */
+const REASONS=['Traffic / Transit','Official Errand','Medical','System Issue','Other (unexcused)'];
+const askReason=t=>new Promise(res=>{const d=document.createElement('div');d.className='ov';
+ d.innerHTML=`<div class="card"><h2>${t}</h2><label class="l">Reason</label><select id="rs">${REASONS.map(x=>`<option>${x}</option>`).join('')}</select><p style="color:var(--mute);font-size:.85rem">Your admin reviews reasons before they excuse any minutes.</p><div class="bar"><button class="btn" id="rc">Cancel</button><button class="btn pri" id="ro">Confirm</button></div></div>`;
+ document.body.appendChild(d);$('#rc').onclick=()=>{d.remove();res(null)};$('#ro').onclick=()=>{const v=$('#rs').value;d.remove();res(v)}});
 function hav(a,b,c,d){const R=6371000,t=x=>x*Math.PI/180,dl=t(c-a),dn=t(d-b);
  const h=Math.sin(dl/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
 async function getIP(){return (await (await fetch('https://api.ipify.org?format=json')).json()).ip}
 const getPos=()=>new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{enableHighAccuracy:true,timeout:15000,maximumAge:0}));
 async function verify(){
- const m=fac.mode||'either',r={ip:null,ipOk:false,gpsOk:false,dist:null};
- if(m!=='gps'){try{r.ip=await getIP();r.ipOk=!!fac.ip&&r.ip===fac.ip.trim()}catch(e){}}
- if(m!=='ip'){try{const p=await getPos();r.lat=p.coords.latitude;r.lng=p.coords.longitude;
-  if(fac.lat!=null&&fac.lat!==''){r.dist=Math.round(hav(+fac.lat,+fac.lng,r.lat,r.lng));r.gpsOk=r.dist<=(+fac.radius||50)}}catch(e){}}
- r.ok=m==='ip'?r.ipOk:m==='gps'?r.gpsOk:m==='both'?r.ipOk&&r.gpsOk:r.ipOk||r.gpsOk;return r}
+ const m=rules.mode,mine=branches.filter(b=>b.id===me.primaryBranchId||(me.allowedBranchIds||[]).includes(b.id)).sort((a,b)=>(b.id===me.primaryBranchId)-(a.id===me.primaryBranchId));
+ const r={ip:null,dist:null,ok:false,branch:null};let p=null;
+ if(m!=='gps'){try{r.ip=await getIP()}catch(e){}}
+ if(m!=='ip'){try{p=await getPos();r.lat=p.coords.latitude;r.lng=p.coords.longitude}catch(e){}}
+ for(const b of mine){
+  const ipOk=!!r.ip&&(b.officeIPs||[]).includes(r.ip),d=p&&b.lat!=null&&b.lat!==''?Math.round(hav(+b.lat,+b.lng,r.lat,r.lng)):null,gOk=d!==null&&d<=(+b.radius||50);
+  if(r.dist===null&&d!==null)r.dist=d;
+  if(m==='ip'?ipOk:m==='gps'?gOk:m==='both'?ipOk&&gOk:ipOk||gOk){r.ok=true;r.branch=b;r.dist=d;r.method=ipOk&&gOk?'Office_IP+GPS':ipOk?'Office_IP':'GPS';break}}
+ return r}
 
 /* ---------- Employee view ---------- */
 async function empView(){
  $('#app').innerHTML=header('Employee')+`<div class="wrap"><div class="card"><h2>Today · ${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})}</h2>
- <div id="shift"></div><div id="badge" class="badge wait">Checking location…</div>
-  <p id="rec" style="color:var(--mute);margin-bottom:0"></p><button class="btn sm" style="margin-top:8px" id="re">Re-check location</button></div>
+ <div id="shift"></div><div id="badge" class="badge wait">Checking location…</div><p id="rec" style="color:var(--mute);margin-bottom:0"></p><button class="btn sm" style="margin-top:8px" id="re">Re-check location</button></div>
+ <div class="card"><h2>Attendance rules</h2><ul style="margin:0;padding-left:18px;color:var(--mute)"><li><b>Late:</b> Time In more than ${rules.grace} min after your start time.</li><li><b>Early Out:</b> Time Out before your end time. It only counts if you have a Time In today.</li><li>${rules.breakMin} min unpaid break is deducted from net hours.</li><li>Late or Early Out asks for a reason, which your admin reviews.</li></ul></div>
  <div class="card"><h2>Reminders</h2><p style="margin-top:0;color:var(--mute)">Get a notification ${LEAD} minutes before Time In and Time Out.</p><button class="btn" id="rem"></button></div>
- <div class="card"><h2>Recent attendance</h2><div id="hist"></div></div></div><div class="big dock"><button class="btn in" id="bin" disabled>Time In</button><button class="btn out" id="bout" disabled>Time Out</button></div>`;
- const today=pd(todayS()),works=me.days.includes(today.getDay());
- $('#shift').innerHTML=`<strong>${works?esc(me.start)+' – '+esc(me.end):'Day off'}</strong><div>${me.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')} <small style="color:var(--mute)">${esc(me.start)}–${esc(me.end)}</small></div>`;
- const id=me.uid+'_'+todayS();let rec=(await getDoc(doc(db,'attendance',id))).data();
- const showRec=()=>{$('#rec').textContent=rec?`In ${hm(rec.timeIn)} (${rec.inStatus})${rec.timeOut?' · Out '+hm(rec.timeOut)+' ('+rec.outStatus+')':''}`:'No record yet today.';
+ <div class="card"><h2>Recent attendance</h2><div id="hist"></div></div></div>
+ <div class="big dock"><button class="btn in" id="bin" disabled>Time In</button><button class="btn out" id="bout" disabled>Time Out</button></div>`;
+ const works=me.days.includes(new Date().getDay()),id=me.uid+'_'+todayS();let rec=(await getDoc(doc(db,'attendance',id))).data();
+ $('#shift').innerHTML=`<strong>${works?esc(me.start)+' – '+esc(me.end):'Day off'}</strong><div>${me.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div>`;
+ const showRec=()=>{$('#rec').textContent=rec?`In ${hm(rec.timeIn)} (${rec.inStatus})${rec.timeOut?' · Out '+hm(rec.timeOut)+' ('+rec.outStatus+') · '+rec.netHours+' h net':''}`:'No record yet today.';
   $('#bin').disabled=!(ver?.ok&&works&&!rec);$('#bout').disabled=!(ver?.ok&&rec&&!rec.timeOut)};
- const check=async()=>{$('#badge').className='badge wait';$('#badge').textContent='Checking location…';ver=await verify();
-  const m=fac.mode||'either',d=[ver.ip?'IP '+ver.ip:'',ver.dist!=null?ver.dist+' m from facility':''].filter(Boolean).join(' · ');
+ const check=async()=>{$('#badge').className='badge wait';$('#badge').textContent='Checking location…';ver=await verify();if(first===null)first=ver.ok;
+  const none=!branches.some(b=>b.id===me.primaryBranchId),d=[ver.ip?'IP '+ver.ip:'',ver.dist!=null?ver.dist+' m from branch':''].filter(Boolean).join(' · ');
   $('#badge').className='badge '+(ver.ok?'ok':'no');
-  $('#badge').innerHTML=(ver.ok?'Connected to Facility Zone':m==='gps'?'Outside Facility - Move within '+(fac.radius||50)+' m':'Outside Facility - Connect to Office Wi-Fi')+`<small>${esc(d||'Location unavailable. Allow location access.')}</small>`;showRec()};
- const punch=async out=>{const b=out?$('#bout'):$('#bin');b.disabled=true;ver=await verify();
-  if(!ver.ok){toast('Verification failed. You are not at the facility.');return check()}
-  const now=Date.now(),v={ip:ver.ip||'',lat:ver.lat??null,lng:ver.lng??null,dist:ver.dist};
-  try{if(out){rec={...rec,timeOut:now,outStatus:outStatus(now,me.end),outVerify:v}}
-   else rec={uid:me.uid,name:me.name,date:todayS(),timeIn:now,inStatus:inStatus(now,me.start),inVerify:v,start:me.start,end:me.end};
+  $('#badge').innerHTML=(ver.ok?'Connected to Facility Zone · '+esc(ver.branch.name):rules.mode==='gps'?'Outside Facility - Move closer to your branch':'Outside Facility - Connect to Office Wi-Fi')+`<small>${esc(none?'No branch assigned. Ask your admin.':d||'Location unavailable. Allow location access.')}</small>`;showRec()};
+ const punch=async out=>{(out?$('#bout'):$('#bin')).disabled=true;
+  if(out&&(!rec?.timeIn||Date.now()-rec.timeIn<120000)){toast('Time Out needs a Time In at least 2 minutes earlier.');return showRec()}
+  ver=await verify();if(!ver.ok){toast('Verification failed. You are not at an allowed branch.');return check()}
+  const now=Date.now(),n=mins(new Date(now)),v={ip:ver.ip||'',lat:ver.lat??null,lng:ver.lng??null};
+  try{
+   if(out){const under=Math.max(0,tm(me.end)-n),early=under>0;let rs=null;
+    if(early){rs=await askReason('Leaving early');if(!rs)return showRec()}
+    rec={...rec,timeOut:now,outStatus:early?'Early Out':'Completed',undertimeMinutes:under,breakMinutes:+rules.breakMin,netHours:Math.round(Math.max(0,(now-rec.timeIn)/60000-rules.breakMin)/60*100)/100,outVerify:v};
+    if(early){rec.outReason=rs;rec.reasonStatus='pending'}}
+   else{const late=Math.max(0,n-tm(me.start)-rules.grace),isLate=late>0;let rs=null;
+    if(isLate){rs=await askReason('You are late');if(!rs)return showRec()}
+    rec={uid:me.uid,name:me.name,date:todayS(),timeIn:now,inStatus:isLate?'Late':'On Time',lateMinutes:late,branchId:ver.branch.id,branchName:ver.branch.name,start:me.start,end:me.end,
+     verificationMethod:ver.method,clockInCycleSeconds:Math.round((now-T0)/1000),locationRetries:retries,firstPassOk:first===true,manualOverride:false,inVerify:v};
+    if(isLate){rec.lateReason=rs;rec.reasonStatus='pending'}}
    await setDoc(doc(db,'attendance',id),rec,{merge:true});toast(out?'Timed out.':'Timed in.');navigator.vibrate?.(60)}catch(e){toast('Could not save: '+e.code)}
   showRec();loadHist()};
- $('#bin').onclick=()=>punch(false);$('#bout').onclick=()=>punch(true);$('#re').onclick=check;
+ $('#bin').onclick=()=>punch(false);$('#bout').onclick=()=>punch(true);$('#re').onclick=()=>{retries++;check()};
  const loadHist=async()=>{const s=await getDocs(query(collection(db,'attendance'),where('uid','==',me.uid)));
   const l=s.docs.map(d=>d.data()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
-  $('#hist').innerHTML=l.length?l.map(r=>`<div class="row"><div class="w"><strong>${r.date}</strong><small>In ${hm(r.timeIn)}${r.timeOut?' · Out '+hm(r.timeOut):' · no Time Out'}</small></div><span class="tag ${cls(r)}" style="font-size:.8rem">${r.outStatus==='Early Out'?'Early Out':r.inStatus}</span></div>`).join(''):'<small>No records yet.</small>'};
+  $('#hist').innerHTML=l.length?l.map(r=>`<div class="row"><div class="w"><strong>${r.date}</strong><small>${esc(r.branchName||'')} · In ${hm(r.timeIn)}${r.timeOut?' · Out '+hm(r.timeOut)+' · '+r.netHours+' h':' · no Time Out'}</small></div><span class="tag ${cls(r)}">${r.outStatus==='Early Out'?'Early Out':r.inStatus}</span></div>`).join(''):'<small>No records yet.</small>'};
  loadHist();check();setupReminders();
  const rb=$('#rem'),upd=()=>rb.textContent=localStorage.remind==='1'&&Notification.permission==='granted'?'Reminders on (tap to turn off)':'Enable reminders';
  upd();rb.onclick=async()=>{if(localStorage.remind==='1'){localStorage.remind='0'}else{
@@ -188,23 +205,29 @@ function setupReminders(){
 /* ---------- Admin view ---------- */
 function adminView(){
  $('#app').innerHTML=header('Admin')+`<div class="wrap"><div class="tabs" role="tablist">
- ${[['dash','Dashboard'],['emp','Employees'],['fac','Facility']].map(([k,l])=>`<button class="tab" role="tab" aria-selected="${tab===k}" onclick="setTab('${k}')">${l}</button>`).join('')}</div><div id="pane"></div></div>`;
+ ${[['dash','Dashboard'],['emp','Employees'],['fac','Branches']].map(([k,l])=>`<button class="tab" role="tab" aria-selected="${tab===k}" onclick="setTab('${k}')">${l}</button>`).join('')}</div><div id="pane"></div></div>`;
  ({dash:dashPane,emp:empPane,fac:facPane})[tab]()}
 W({setTab:k=>{tab=k;adminView()}});
 const employees=async()=>(await getDocs(collection(db,'users'))).docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.role==='employee').sort((a,b)=>a.name.localeCompare(b.name));
 
+let bf='';
 async function dashPane(){
  const days=[...Array(7)].map((_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d}),a=ymd(days[0]),b=ymd(days[6]);
- $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="wk(-7)">‹</button><button class="btn sm" onclick="wk(7)">›</button><button class="btn sm" onclick="wk(0)">This week</button><strong>${a} to ${b}</strong></div>
- <div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>`;
- const [emps,snap]=await Promise.all([employees(),getDocs(query(collection(db,'attendance'),where('date','>=',a),where('date','<=',b)))]);
- const recs={};snap.docs.forEach(d=>{const r=d.data();recs[r.uid+'|'+r.date]=r});
+ $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="wk(-7)">‹</button><button class="btn sm" onclick="wk(7)">›</button><button class="btn sm" onclick="wk(0)">This week</button><strong>${a} to ${b}</strong>
+ <select style="width:auto" onchange="bf=this.value;dashPane()"><option value="">All branches</option>${branches.map(x=>`<option value="${x.id}"${bf===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+ <div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>
+ <div class="card"><h2>Reasons awaiting approval</h2><div id="pa"></div></div>`;
+ const [e0,snap]=await Promise.all([employees(),getDocs(query(collection(db,'attendance'),where('date','>=',a),where('date','<=',b)))]);
+ const emps=e0.filter(e=>!bf||e.primaryBranchId===bf||(e.allowedBranchIds||[]).includes(bf)),recs={},pend=[];
+ snap.docs.forEach(d=>{const r={id:d.id,...d.data()};if(bf&&r.branchId!==bf)return;recs[r.uid+'|'+r.date]=r;if(r.reasonStatus==='pending')pend.push(r)});
  const now=new Date(),t=ymd(now);
  $('#gr').innerHTML=emps.length?`<table><tr><th class="n">Employee</th>${days.map(d=>`<th>${DAYS[d.getDay()]} ${d.getDate()}</th>`).join('')}</tr>`+emps.map(e=>`<tr><td class="n">${esc(e.name)}<small style="display:block;color:var(--mute);font-weight:400">${esc(e.start)}–${esc(e.end)}</small></td>`+days.map(d=>{
   const s=ymd(d),r=recs[e.uid+'|'+s];
-  if(r){const lab=r.outStatus==='Early Out'?'Early Out':r.inStatus;return `<td class="c ${cls(r)}" title="${esc(r.name)}: ${lab}">${lab}<br>${hm(r.timeIn)}${r.timeOut?'–'+hm(r.timeOut):'–?'}</td>`}
+  if(r){const lab=r.outStatus==='Early Out'?'Early Out':r.inStatus;return `<td class="c ${cls(r)}" title="${esc(r.branchName||'')}">${lab}<br>${hm(r.timeIn)}${r.timeOut?'–'+hm(r.timeOut):'–?'}</td>`}
   if(!e.days.includes(d.getDay()))return `<td class="c s-off">–</td>`;
-  const past=s<t||(s===t&&mins(now)>tm(e.end));return past?`<td class="c s-abs">Absent</td>`:`<td class="c s-sch">${esc(e.start)}</td>`}).join('')+`</tr>`).join('')+`</table>`:'No employees yet. Add some in the Employees tab.'}
+  const past=s<t||(s===t&&mins(now)>tm(e.end));return past?`<td class="c s-abs">Absent</td>`:`<td class="c s-sch">${esc(e.start)}</td>`}).join('')+`</tr>`).join('')+`</table>`:'No employees for this view.';
+ $('#pa').innerHTML=pend.length?pend.map(r=>`<div class="row"><div class="w"><strong>${esc(r.name)}</strong> · ${r.date}<small>${esc(r.branchName||'')}${r.lateMinutes?' · Late '+r.lateMinutes+' min: '+esc(r.lateReason):''}${r.undertimeMinutes?' · Undertime '+r.undertimeMinutes+' min: '+esc(r.outReason):''}</small></div><button class="btn sm" onclick="appr('${r.id}',1)">Approve</button><button class="btn sm del" onclick="appr('${r.id}',0)">Reject</button></div>`).join(''):'<small>Nothing pending.</small>'}
+W({appr:async(id,ok)=>{await setDoc(doc(db,'attendance',id),{reasonStatus:ok?'approved':'rejected'},{merge:true});toast(ok?'Approved.':'Rejected.');dashPane()}});
 W({wk:n=>{if(!n)weekStart=mon(new Date());else weekStart.setDate(weekStart.getDate()+n);dashPane()}});
 
 const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
@@ -216,7 +239,7 @@ async function empPane(){
  ${e?'':`<div><label class="l">Temporary password (6+ chars)</label><input id="p" type="text"></div>`}
  <div><label class="l">Start time</label><input id="s" type="time" value="${e?.start||'08:00'}"></div>
  <div><label class="l">End time</label><input id="en" type="time" value="${e?.end||'17:00'}"></div></div>
- <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div>
+ <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div><label class="l" style="margin-top:10px">Primary branch</label><select id="pb"><option value="">Select…</option>${branches.map(x=>`<option value="${x.id}"${e?.primaryBranchId===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Also allowed to clock in at (floating or relieving)</label><div class="days" id="ab">${branches.map(x=>`<label><input type="checkbox" value="${x.id}"${(e?.allowedBranchIds||[]).includes(x.id)?' checked':''}>${esc(x.name)}</label>`).join('')||'<small>Add branches first.</small>'}</div>
  <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="editing=null;setTab(\'emp\')">Cancel</button>':''}</div>
  <div class="card"><h2>Employees</h2><div id="el">Loading…</div></div>`;
  const l=await employees();window._emps=l;
@@ -224,33 +247,45 @@ async function empPane(){
  <button class="btn sm" onclick="editEmp('${u.uid}')">Edit</button><button class="btn sm del" onclick="delEmp('${u.uid}')">Remove</button></div>`).join(''):'<small>None yet.</small>'}
 W({editing:null,editEmp:id=>{editing=window._emps.find(u=>u.uid===id);empPane();scrollTo(0,0)},
  saveEmp:async()=>{const days=[...document.querySelectorAll('#d input:checked')].map(i=>+i.value),name=$('#n').value.trim(),start=$('#s').value,end=$('#en').value,er=$('#er');
-  if(!name||!start||!end||!days.length)return er.textContent='Fill in name, times and at least one work day.';
-  try{if(editing){await setDoc(doc(db,'users',editing.uid),{name,start,end,days},{merge:true});editing=null}
+  if(!name||!start||!end||!days.length||!$('#pb').value)return er.textContent='Fill in name, times and at least one work day.';
+  try{if(editing){await setDoc(doc(db,'users',editing.uid),{name,start,end,days,...bx()},{merge:true});editing=null}
    else{const email=$('#m').value.trim(),pw=$('#p').value;if(!email||pw.length<6)return er.textContent='Enter an email and a password of 6+ characters.';
     const sec=initializeApp(cfg,'sec'+Date.now()),sa=getAuth(sec),c=await createUserWithEmailAndPassword(sa,email,pw);await signOut(sa);
-    await setDoc(doc(db,'users',c.user.uid),{name,email,role:'employee',start,end,days})}
+    await setDoc(doc(db,'users',c.user.uid),{name,email,role:'employee',start,end,days,...bx()})}
    toast('Saved.');empPane()}catch(x){er.textContent='Failed: '+(x.code||x.message)}},
  delEmp:async id=>{if(!confirm('Remove this employee? They lose access immediately. Also delete their login in Firebase Console > Authentication.'))return;
   await deleteDoc(doc(db,'users',id));toast('Removed.');empPane()}});
 
+const bx=()=>({primaryBranchId:$('#pb').value,allowedBranchIds:[...document.querySelectorAll('#ab input:checked')].map(i=>i.value)});
+let eb=null;
 function facPane(){
- const f=fac;
- $('#pane').innerHTML=`<div class="card"><h2>Facility presence rules</h2><p style="margin-top:0;color:var(--mute)">${esc(FACILITY_NAME)}</p><div class="grid">
- <div><label class="l">Verification method</label><select id="fm">${[['either','Wi-Fi IP or GPS (either passes)'],['both','Wi-Fi IP and GPS (both required)'],['ip','Wi-Fi IP only'],['gps','GPS only']].map(([v,l])=>`<option value="${v}"${(f.mode||'either')===v?' selected':''}>${l}</option>`).join('')}</select></div>
- <div><label class="l">Facility public IP</label><input id="fi" value="${esc(f.ip)}" placeholder="e.g. 203.0.113.10"></div>
- <div><label class="l">Latitude</label><input id="fa" value="${esc(f.lat)}" inputmode="decimal"></div>
- <div><label class="l">Longitude</label><input id="fo" value="${esc(f.lng)}" inputmode="decimal"></div>
- <div><label class="l">Radius (meters)</label><input id="fr" type="number" value="${f.radius||50}"></div></div>
- <p style="margin-bottom:6px;color:var(--mute);font-size:.88rem">Standing inside the facility on its Wi-Fi? Use these to capture the values.</p>
- <button class="btn" onclick="detIP()">Detect my public IP</button> <button class="btn" onclick="detGPS()">Use my current location</button>
- <p class="err" id="fe"></p><button class="btn pri" onclick="saveFac()">Save facility settings</button></div>`}
-W({detIP:async()=>{try{$('#fi').value=await getIP()}catch(e){toast('Could not reach ipify.')}},
- detGPS:async()=>{try{const p=await getPos();$('#fa').value=p.coords.latitude.toFixed(6);$('#fo').value=p.coords.longitude.toFixed(6);toast('Location captured (±'+Math.round(p.coords.accuracy)+' m).')}catch(e){toast('Location denied or unavailable.')}},
- saveFac:async()=>{const g=i=>$(i).value.trim(),n=i=>g(i)===''?null:parseFloat(g(i));
-  const mode=g('#fm'),o={mode,ip:g('#fi'),lat:n('#fa'),lng:n('#fo'),radius:n('#fr')||50,name:FACILITY_NAME};
-  if(mode!=='gps'&&!o.ip)return $('#fe').textContent='Enter the facility public IP.';
-  if(mode!=='ip'&&(o.lat==null||o.lng==null))return $('#fe').textContent='Enter latitude and longitude.';
-  await setDoc(doc(db,'settings','facility'),o);fac=o;$('#fe').textContent='';toast('Facility settings saved.')}});
+ const r=rules,b=eb||{};
+ $('#pane').innerHTML=`<div class="card"><h2>Attendance rules</h2><div class="grid">
+ <div><label class="l">Verification method</label><select id="fm">${[['either','Wi-Fi IP or GPS (either passes)'],['both','Wi-Fi IP and GPS (both required)'],['ip','Wi-Fi IP only'],['gps','GPS only']].map(([v,l])=>`<option value="${v}"${r.mode===v?' selected':''}>${l}</option>`).join('')}</select></div>
+ <div><label class="l">Grace period (minutes)</label><input id="rg" type="number" value="${r.grace}"></div>
+ <div><label class="l">Unpaid break (minutes)</label><input id="rb" type="number" value="${r.breakMin}"></div></div>
+ <button class="btn pri" style="margin-top:10px" onclick="saveRules()">Save rules</button></div>
+ <div class="card"><h2>${eb?'Edit branch':'Add branch'}</h2><div class="grid">
+ <div><label class="l">Branch name</label><input id="bn" value="${esc(b.name)}" placeholder="Little Trikes Academy - Bin Sagar Tower"></div>
+ <div><label class="l">Address</label><input id="ba" value="${esc(b.address)}" placeholder="AD 46 Najda St, Abu Dhabi, UAE"></div>
+ <div><label class="l">Office public IPs (comma-separated)</label><input id="bi" value="${esc((b.officeIPs||[]).join(', '))}"></div>
+ <div><label class="l">Latitude</label><input id="bla" value="${esc(b.lat)}" inputmode="decimal"></div>
+ <div><label class="l">Longitude</label><input id="blo" value="${esc(b.lng)}" inputmode="decimal"></div>
+ <div><label class="l">Radius (meters)</label><input id="br" type="number" value="${b.radius||50}"></div></div>
+ <p style="color:var(--mute);font-size:.88rem">Standing at the branch? Capture its values:</p>
+ <button class="btn" onclick="detIP()">Add my public IP</button> <button class="btn" onclick="detGPS()">Use my current location</button>
+ <p class="err" id="fe"></p><button class="btn pri" onclick="saveBranch()">Save branch</button> ${eb?'<button class="btn" onclick="eb=null;facPane()">Cancel</button>':''}</div>
+ <div class="card"><h2>Branches</h2>${branches.length?branches.map(x=>`<div class="row"><div class="w"><strong>${esc(x.name)}</strong><small>${esc(x.address)} · ${(x.officeIPs||[]).length} IP(s) · ${x.radius} m</small></div><button class="btn sm" onclick="editBr('${x.id}')">Edit</button><button class="btn sm del" onclick="delBr('${x.id}')">Delete</button></div>`).join(''):'<small>No branches yet.</small>'}</div>`}
+W({detIP:async()=>{try{const ip=await getIP(),el=$('#bi'),l=el.value.split(',').map(x=>x.trim()).filter(Boolean);if(!l.includes(ip))l.push(ip);el.value=l.join(', ')}catch(e){toast('Could not reach ipify.')}},
+ detGPS:async()=>{try{const p=await getPos();$('#bla').value=p.coords.latitude.toFixed(6);$('#blo').value=p.coords.longitude.toFixed(6);toast('Location captured (±'+Math.round(p.coords.accuracy)+' m).')}catch(e){toast('Location denied or unavailable.')}},
+ eb:null,editBr:id=>{eb=branches.find(x=>x.id===id);facPane();scrollTo(0,0)},
+ saveRules:async()=>{const o={mode:$('#fm').value,grace:+$('#rg').value||0,breakMin:+$('#rb').value||0};await setDoc(doc(db,'settings','rules'),o);rules=o;toast('Rules saved.')},
+ saveBranch:async()=>{const g=i=>$(i).value.trim(),n=i=>g(i)===''?null:parseFloat(g(i)),ips=g('#bi').split(',').map(x=>x.trim()).filter(Boolean),name=g('#bn')||$('#bn').placeholder,address=g('#ba')||$('#ba').placeholder;
+  const o={name,address,officeIPs:ips,lat:n('#bla'),lng:n('#blo'),radius:n('#br')||50},m=rules.mode;
+  if(m!=='gps'&&!ips.length)return $('#fe').textContent='Add at least one office public IP.';
+  if(m!=='ip'&&(o.lat==null||o.lng==null))return $('#fe').textContent='Enter latitude and longitude.';
+  const id=eb?.id||'b'+Date.now().toString(36);await setDoc(doc(db,'branches',id),o);await loadCfg();eb=null;toast('Branch saved.');facPane()},
+ delBr:async id=>{if(!confirm('Delete this branch? Staff assigned to it will be blocked until reassigned.'))return;await deleteDoc(doc(db,'branches',id));await loadCfg();facPane()}});
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
 </script>
