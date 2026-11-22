@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a2d5a">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="LT Attendance">
+<title>Little Trikes Academy Attendance</title>
+<style>
+:root{--ink:#17212e;--mute:#68768a;--bg:#eef2f7;--card:#fff;--line:#dce3ec;--navy:#1a2d5a;--gold:#d4a72c;--maroon:#6b1223;--blue:#2f6fe4;--blue-l:#dce8fc;--g:#2e9e5b;--g-l:#d6f1e1;--r:#d64545;--r-l:#fadada;--y:#e3a008;--y-l:#fdefbd;--o-l:#ffdcbf}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+button,input,select{font:inherit;color:inherit}button{cursor:pointer}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.top{background:var(--navy);color:#fff;padding:calc(10px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;gap:10px}
+.top b{flex:1}.top small{opacity:.75;display:block;font-weight:400}
+.wrap{max-width:1000px;margin:0 auto;padding:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+h2{font-size:1.05rem;margin:0 0 10px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font-weight:600}
+.btn.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.sm{padding:4px 10px;font-size:.85rem}.btn.del{color:var(--r)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.top .btn{background:transparent;color:#fff;border-color:#ffffff66}
+input,select{border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fff;width:100%}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+label.l{display:block;font-size:.82rem;color:var(--mute);margin-bottom:3px}
+.tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
+.tab{border:0;background:transparent;padding:8px 14px;border-radius:8px;font-weight:600;color:var(--mute);white-space:nowrap}
+.tab[aria-selected=true]{background:var(--navy);color:#fff}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.days label{border:1px solid var(--line);border-radius:8px;padding:5px 11px;cursor:pointer;user-select:none}
+.days input{position:absolute;opacity:0;width:0}
+.days label:has(input:checked){background:var(--blue);border-color:var(--blue);color:#fff}
+.tag{display:inline-block;background:var(--blue-l);color:#1d4fb0;border-radius:6px;padding:1px 7px;font-size:.8rem;margin:2px 3px 0 0}
+.badge{border-radius:10px;padding:12px 14px;font-weight:700;text-align:center;margin:10px 0}
+.badge small{display:block;font-weight:400;opacity:.85}
+.badge.ok{background:var(--g-l);color:#12663a}.badge.no{background:var(--r-l);color:#8f2020}.badge.wait{background:var(--blue-l);color:#1d4fb0}
+.big{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.big .btn{padding:18px 8px;font-size:1.1rem}
+.big .in:not(:disabled){background:var(--g);border-color:var(--g);color:#fff}
+.big .out:not(:disabled){background:var(--navy);border-color:var(--navy);color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}.row .w{flex:1;min-width:140px}.row small{color:var(--mute);display:block}
+.scroll{overflow-x:auto}
+table{border-collapse:separate;border-spacing:4px;width:100%;min-width:640px}
+th{font-size:.8rem;color:var(--mute);font-weight:600}th.n,td.n{text-align:left;font-weight:600;white-space:nowrap}
+td.c{text-align:center;border-radius:8px;font-size:.78rem;padding:8px 3px;min-width:78px}
+.s-on{background:var(--g-l);color:#12663a}.s-late{background:var(--y-l);color:#7a5200}.s-early{background:var(--o-l);color:#8a4300}
+.s-abs{background:var(--r-l);color:#8f2020}.s-sch{background:var(--blue-l);color:#1d4fb0}.s-off{color:#b3bcc9}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;font-size:.8rem}.legend span{border-radius:6px;padding:2px 9px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}.bar strong{flex:1}
+.err{color:var(--r);min-height:1.3em;font-size:.9rem}
+.login{max-width:380px;margin:8vh auto}.login .card>*{margin-bottom:10px}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
+#toast.show{opacity:1}
+/* ---- Little Trikes Academy branding + ergonomics ---- */
+html{-webkit-text-size-adjust:100%}body{font-size:16px;-webkit-tap-highlight-color:transparent}
+.top{border-bottom:3px solid var(--gold);gap:12px}
+.top img{width:42px;height:42px;border-radius:50%;flex:none}
+.top .btn.sm{min-height:44px}
+.brand{text-align:center;margin-bottom:6px}.brand img{width:132px;height:132px}
+.brand h1{font-size:1.25rem;margin:8px 0 0;color:var(--navy)}.brand p{margin:2px 0 0;color:var(--maroon);font-weight:600}
+.btn,.tab{min-height:48px}.btn.sm{min-height:40px;padding:6px 14px}
+input,select{font-size:16px;min-height:48px}
+.btn.pri{background:var(--navy);border-color:var(--navy)}
+.card{border-top:3px solid var(--gold)}
+.days label{padding:11px 15px;min-height:44px}
+.tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:#fff;border-top:3px solid var(--gold);padding:6px 8px calc(6px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,1fr);gap:6px;z-index:5}
+.tab{text-align:center;font-size:.95rem}.tab[aria-selected=true]{background:var(--navy)}
+.wrap:has(.tabs){padding-bottom:96px}
+.dock{position:fixed;left:0;right:0;bottom:0;margin:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:#fffffff2;backdrop-filter:blur(8px);border-top:3px solid var(--gold);z-index:5}
+.dock .btn{min-height:64px;font-size:1.15rem}
+.wrap:has(+ .dock){padding-bottom:118px}
+.badge{font-size:1.05rem;padding:16px 14px}
+#toast{bottom:calc(92px + env(safe-area-inset-bottom))}
+@media(min-width:760px){.dock,.tabs{left:50%;right:auto;width:min(760px,100%);transform:translateX(-50%);border-radius:14px 14px 0 0}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" role="status"></div>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut,createUserWithEmailAndPassword} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,doc,getDoc,setDoc,deleteDoc,collection,getDocs,query,where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ===== 1. PASTE YOUR FIREBASE WEB CONFIG HERE ===== */
+const cfg={apiKey:"AIzaSyBq9R2mkexK8fZ7aDMORR-4u_fQ1OwwQUg",authDomain:"little-trikes-attendance.firebaseapp.com",projectId:"little-trikes-attendance",storageBucket:"little-trikes-attendance.firebasestorage.app",messagingSenderId:"142111712131",appId:"1:142111712131:web:73f7f93c4282893cdf0cb6"};
+const GRACE=5, LEAD=10; // minutes of grace before "Late"; minutes before shift for reminders
+const FACILITY_NAME="Little Trikes Academy, Bin Sagar Tower, AD 46 Najda St, Abu Dhabi, UAE";
+
+const app=initializeApp(cfg),auth=getAuth(app),db=getFirestore(app);
+const $=s=>document.querySelector(s),DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad=n=>String(n).padStart(2,'0'),ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const pd=s=>{const [a,b,c]=s.split('-').map(Number);return new Date(a,b-1,c)};
+const tm=s=>{const [h,m]=s.split(':').map(Number);return h*60+m},mins=d=>d.getHours()*60+d.getMinutes();
+const hm=ms=>{const d=new Date(ms);return pad(d.getHours())+':'+pad(d.getMinutes())};
+const W=o=>Object.assign(window,o);
+function toast(m){const t=$('#toast');t.textContent=m;t.className='show';clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='',3200)}
+const todayS=()=>ymd(new Date());
+let me=null,fac={},tab='dash',weekStart=mon(new Date()),editing=null,ver=null;
+function mon(d){const x=new Date(d);x.setDate(x.getDate()-((x.getDay()+6)%7));x.setHours(0,0,0,0);return x}
+
+/* ---------- Auth ---------- */
+onAuthStateChanged(auth,async u=>{
+ if(!u){me=null;return loginView()}
+ const s=await getDoc(doc(db,'users',u.uid));
+ if(!s.exists()){await signOut(auth);return loginView('No access: your account has no profile. Contact your admin.')}
+ me={uid:u.uid,...s.data()};
+ const f=await getDoc(doc(db,'settings','facility'));fac=f.exists()?f.data():{};
+ me.role==='admin'?adminView():empView();
+});
+function loginView(err=''){
+ $('#app').innerHTML=`<div class="login"><div class="card"><div class="brand"><img src="logo.png" alt="Little Trikes Academy logo"><h1>Little Trikes Academy</h1><p>Staff Attendance</p></div>
+ <input id="em" type="email" placeholder="Email" autocomplete="username"><input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+ <div class="err" id="le">${esc(err)}</div><button class="btn pri" style="width:100%" id="lg">Sign in</button></div></div>`;
+ const go=async()=>{try{await signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value)}catch(e){$('#le').textContent='Wrong email or password.'}};
+ $('#lg').onclick=go;$('#pw').onkeydown=e=>e.key==='Enter'&&go()}
+const header=r=>`<div class="top"><img src="logo.png" alt=""><b>${esc(me.name)}<small>${r} · Little Trikes Academy</small></b><button class="btn sm" onclick="signOutNow()">Sign out</button></div>`;
+W({signOutNow:()=>signOut(auth)});
+
+/* ---------- Status logic ---------- */
+const inStatus=(ms,start)=>mins(new Date(ms))>tm(start)+GRACE?'Late':'On Time';
+const outStatus=(ms,end)=>mins(new Date(ms))<tm(end)?'Early Out':'Completed';
+const cls=r=>!r?'':r.outStatus==='Early Out'?'s-early':r.inStatus==='Late'?'s-late':'s-on';
+
+/* ---------- Presence verification ---------- */
+function hav(a,b,c,d){const R=6371000,t=x=>x*Math.PI/180,dl=t(c-a),dn=t(d-b);
+ const h=Math.sin(dl/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
+async function getIP(){return (await (await fetch('https://api.ipify.org?format=json')).json()).ip}
+const getPos=()=>new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{enableHighAccuracy:true,timeout:15000,maximumAge:0}));
+async function verify(){
+ const m=fac.mode||'either',r={ip:null,ipOk:false,gpsOk:false,dist:null};
+ if(m!=='gps'){try{r.ip=await getIP();r.ipOk=!!fac.ip&&r.ip===fac.ip.trim()}catch(e){}}
+ if(m!=='ip'){try{const p=await getPos();r.lat=p.coords.latitude;r.lng=p.coords.longitude;
+  if(fac.lat!=null&&fac.lat!==''){r.dist=Math.round(hav(+fac.lat,+fac.lng,r.lat,r.lng));r.gpsOk=r.dist<=(+fac.radius||50)}}catch(e){}}
+ r.ok=m==='ip'?r.ipOk:m==='gps'?r.gpsOk:m==='both'?r.ipOk&&r.gpsOk:r.ipOk||r.gpsOk;return r}
+
+/* ---------- Employee view ---------- */
+async function empView(){
+ $('#app').innerHTML=header('Employee')+`<div class="wrap"><div class="card"><h2>Today · ${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})}</h2>
+ <div id="shift"></div><div id="badge" class="badge wait">Checking location…</div>
+  <p id="rec" style="color:var(--mute);margin-bottom:0"></p><button class="btn sm" style="margin-top:8px" id="re">Re-check location</button></div>
+ <div class="card"><h2>Reminders</h2><p style="margin-top:0;color:var(--mute)">Get a notification ${LEAD} minutes before Time In and Time Out.</p><button class="btn" id="rem"></button></div>
+ <div class="card"><h2>Recent attendance</h2><div id="hist"></div></div></div><div class="big dock"><button class="btn in" id="bin" disabled>Time In</button><button class="btn out" id="bout" disabled>Time Out</button></div>`;
+ const today=pd(todayS()),works=me.days.includes(today.getDay());
+ $('#shift').innerHTML=`<strong>${works?esc(me.start)+' – '+esc(me.end):'Day off'}</strong><div>${me.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')} <small style="color:var(--mute)">${esc(me.start)}–${esc(me.end)}</small></div>`;
+ const id=me.uid+'_'+todayS();let rec=(await getDoc(doc(db,'attendance',id))).data();
+ const showRec=()=>{$('#rec').textContent=rec?`In ${hm(rec.timeIn)} (${rec.inStatus})${rec.timeOut?' · Out '+hm(rec.timeOut)+' ('+rec.outStatus+')':''}`:'No record yet today.';
+  $('#bin').disabled=!(ver?.ok&&works&&!rec);$('#bout').disabled=!(ver?.ok&&rec&&!rec.timeOut)};
+ const check=async()=>{$('#badge').className='badge wait';$('#badge').textContent='Checking location…';ver=await verify();
+  const m=fac.mode||'either',d=[ver.ip?'IP '+ver.ip:'',ver.dist!=null?ver.dist+' m from facility':''].filter(Boolean).join(' · ');
+  $('#badge').className='badge '+(ver.ok?'ok':'no');
+  $('#badge').innerHTML=(ver.ok?'Connected to Facility Zone':m==='gps'?'Outside Facility - Move within '+(fac.radius||50)+' m':'Outside Facility - Connect to Office Wi-Fi')+`<small>${esc(d||'Location unavailable. Allow location access.')}</small>`;showRec()};
+ const punch=async out=>{const b=out?$('#bout'):$('#bin');b.disabled=true;ver=await verify();
+  if(!ver.ok){toast('Verification failed. You are not at the facility.');return check()}
+  const now=Date.now(),v={ip:ver.ip||'',lat:ver.lat??null,lng:ver.lng??null,dist:ver.dist};
+  try{if(out){rec={...rec,timeOut:now,outStatus:outStatus(now,me.end),outVerify:v}}
+   else rec={uid:me.uid,name:me.name,date:todayS(),timeIn:now,inStatus:inStatus(now,me.start),inVerify:v,start:me.start,end:me.end};
+   await setDoc(doc(db,'attendance',id),rec,{merge:true});toast(out?'Timed out.':'Timed in.');navigator.vibrate?.(60)}catch(e){toast('Could not save: '+e.code)}
+  showRec();loadHist()};
+ $('#bin').onclick=()=>punch(false);$('#bout').onclick=()=>punch(true);$('#re').onclick=check;
+ const loadHist=async()=>{const s=await getDocs(query(collection(db,'attendance'),where('uid','==',me.uid)));
+  const l=s.docs.map(d=>d.data()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
+  $('#hist').innerHTML=l.length?l.map(r=>`<div class="row"><div class="w"><strong>${r.date}</strong><small>In ${hm(r.timeIn)}${r.timeOut?' · Out '+hm(r.timeOut):' · no Time Out'}</small></div><span class="tag ${cls(r)}" style="font-size:.8rem">${r.outStatus==='Early Out'?'Early Out':r.inStatus}</span></div>`).join(''):'<small>No records yet.</small>'};
+ loadHist();check();setupReminders();
+ const rb=$('#rem'),upd=()=>rb.textContent=localStorage.remind==='1'&&Notification.permission==='granted'?'Reminders on (tap to turn off)':'Enable reminders';
+ upd();rb.onclick=async()=>{if(localStorage.remind==='1'){localStorage.remind='0'}else{
+  if(!('Notification' in window))return toast('Notifications are not supported here.');
+  if(await Notification.requestPermission()==='granted'){localStorage.remind='1';notify('Reminders enabled','You will be notified before your shift.')}else toast('Notifications blocked in browser settings.')}upd()}}
+
+/* ---------- Reminders (fire while the app is open or running in background) ---------- */
+async function notify(t,b){const r=await navigator.serviceWorker?.getRegistration();r?r.showNotification(t,{body:b,tag:t,vibrate:[200,100,200]}):new Notification(t,{body:b})}
+function setupReminders(){
+ const tick=()=>{if(localStorage.remind!=='1'||Notification.permission!=='granted'||!me.days.includes(new Date().getDay()))return;
+  const n=mins(new Date()),d=todayS();
+  [['in',me.start,'Time In'],['out',me.end,'Time Out']].forEach(([k,t,l])=>{const left=tm(t)-n,key='n_'+k+'_'+d;
+   if(left>=0&&left<=LEAD&&!localStorage[key]){localStorage[key]=1;notify(l+' reminder',left?`${l} is due in ${left} min (${t}). Open the app at the facility to tap ${l}.`:`${l} is due now.`)}})};
+ clearInterval(setupReminders.t);setupReminders.t=setInterval(tick,30000);tick();document.addEventListener('visibilitychange',tick)}
+
+/* ---------- Admin view ---------- */
+function adminView(){
+ $('#app').innerHTML=header('Admin')+`<div class="wrap"><div class="tabs" role="tablist">
+ ${[['dash','Dashboard'],['emp','Employees'],['fac','Facility']].map(([k,l])=>`<button class="tab" role="tab" aria-selected="${tab===k}" onclick="setTab('${k}')">${l}</button>`).join('')}</div><div id="pane"></div></div>`;
+ ({dash:dashPane,emp:empPane,fac:facPane})[tab]()}
+W({setTab:k=>{tab=k;adminView()}});
+const employees=async()=>(await getDocs(collection(db,'users'))).docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.role==='employee').sort((a,b)=>a.name.localeCompare(b.name));
+
+async function dashPane(){
+ const days=[...Array(7)].map((_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d}),a=ymd(days[0]),b=ymd(days[6]);
+ $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="wk(-7)">‹</button><button class="btn sm" onclick="wk(7)">›</button><button class="btn sm" onclick="wk(0)">This week</button><strong>${a} to ${b}</strong></div>
+ <div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>`;
+ const [emps,snap]=await Promise.all([employees(),getDocs(query(collection(db,'attendance'),where('date','>=',a),where('date','<=',b)))]);
+ const recs={};snap.docs.forEach(d=>{const r=d.data();recs[r.uid+'|'+r.date]=r});
+ const now=new Date(),t=ymd(now);
+ $('#gr').innerHTML=emps.length?`<table><tr><th class="n">Employee</th>${days.map(d=>`<th>${DAYS[d.getDay()]} ${d.getDate()}</th>`).join('')}</tr>`+emps.map(e=>`<tr><td class="n">${esc(e.name)}<small style="display:block;color:var(--mute);font-weight:400">${esc(e.start)}–${esc(e.end)}</small></td>`+days.map(d=>{
+  const s=ymd(d),r=recs[e.uid+'|'+s];
+  if(r){const lab=r.outStatus==='Early Out'?'Early Out':r.inStatus;return `<td class="c ${cls(r)}" title="${esc(r.name)}: ${lab}">${lab}<br>${hm(r.timeIn)}${r.timeOut?'–'+hm(r.timeOut):'–?'}</td>`}
+  if(!e.days.includes(d.getDay()))return `<td class="c s-off">–</td>`;
+  const past=s<t||(s===t&&mins(now)>tm(e.end));return past?`<td class="c s-abs">Absent</td>`:`<td class="c s-sch">${esc(e.start)}</td>`}).join('')+`</tr>`).join('')+`</table>`:'No employees yet. Add some in the Employees tab.'}
+W({wk:n=>{if(!n)weekStart=mon(new Date());else weekStart.setDate(weekStart.getDate()+n);dashPane()}});
+
+const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
+async function empPane(){
+ const e=editing;
+ $('#pane').innerHTML=`<div class="card"><h2>${e?'Edit '+esc(e.name):'Add employee'}</h2><div class="grid">
+ <div><label class="l">Name</label><input id="n" value="${esc(e?.name)}"></div>
+ <div><label class="l">Email (login)</label><input id="m" type="email" value="${esc(e?.email)}" ${e?'disabled':''}></div>
+ ${e?'':`<div><label class="l">Temporary password (6+ chars)</label><input id="p" type="text"></div>`}
+ <div><label class="l">Start time</label><input id="s" type="time" value="${e?.start||'08:00'}"></div>
+ <div><label class="l">End time</label><input id="en" type="time" value="${e?.end||'17:00'}"></div></div>
+ <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div>
+ <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="editing=null;setTab(\'emp\')">Cancel</button>':''}</div>
+ <div class="card"><h2>Employees</h2><div id="el">Loading…</div></div>`;
+ const l=await employees();window._emps=l;
+ $('#el').innerHTML=l.length?l.map(u=>`<div class="row"><div class="w"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${esc(u.start)}–${esc(u.end)}</small><div>${u.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div></div>
+ <button class="btn sm" onclick="editEmp('${u.uid}')">Edit</button><button class="btn sm del" onclick="delEmp('${u.uid}')">Remove</button></div>`).join(''):'<small>None yet.</small>'}
+W({editing:null,editEmp:id=>{editing=window._emps.find(u=>u.uid===id);empPane();scrollTo(0,0)},
+ saveEmp:async()=>{const days=[...document.querySelectorAll('#d input:checked')].map(i=>+i.value),name=$('#n').value.trim(),start=$('#s').value,end=$('#en').value,er=$('#er');
+  if(!name||!start||!end||!days.length)return er.textContent='Fill in name, times and at least one work day.';
+  try{if(editing){await setDoc(doc(db,'users',editing.uid),{name,start,end,days},{merge:true});editing=null}
+   else{const email=$('#m').value.trim(),pw=$('#p').value;if(!email||pw.length<6)return er.textContent='Enter an email and a password of 6+ characters.';
+    const sec=initializeApp(cfg,'sec'+Date.now()),sa=getAuth(sec),c=await createUserWithEmailAndPassword(sa,email,pw);await signOut(sa);
+    await setDoc(doc(db,'users',c.user.uid),{name,email,role:'employee',start,end,days})}
+   toast('Saved.');empPane()}catch(x){er.textContent='Failed: '+(x.code||x.message)}},
+ delEmp:async id=>{if(!confirm('Remove this employee? They lose access immediately. Also delete their login in Firebase Console > Authentication.'))return;
+  await deleteDoc(doc(db,'users',id));toast('Removed.');empPane()}});
+
+function facPane(){
+ const f=fac;
+ $('#pane').innerHTML=`<div class="card"><h2>Facility presence rules</h2><p style="margin-top:0;color:var(--mute)">${esc(FACILITY_NAME)}</p><div class="grid">
+ <div><label class="l">Verification method</label><select id="fm">${[['either','Wi-Fi IP or GPS (either passes)'],['both','Wi-Fi IP and GPS (both required)'],['ip','Wi-Fi IP only'],['gps','GPS only']].map(([v,l])=>`<option value="${v}"${(f.mode||'either')===v?' selected':''}>${l}</option>`).join('')}</select></div>
+ <div><label class="l">Facility public IP</label><input id="fi" value="${esc(f.ip)}" placeholder="e.g. 203.0.113.10"></div>
+ <div><label class="l">Latitude</label><input id="fa" value="${esc(f.lat)}" inputmode="decimal"></div>
+ <div><label class="l">Longitude</label><input id="fo" value="${esc(f.lng)}" inputmode="decimal"></div>
+ <div><label class="l">Radius (meters)</label><input id="fr" type="number" value="${f.radius||50}"></div></div>
+ <p style="margin-bottom:6px;color:var(--mute);font-size:.88rem">Standing inside the facility on its Wi-Fi? Use these to capture the values.</p>
+ <button class="btn" onclick="detIP()">Detect my public IP</button> <button class="btn" onclick="detGPS()">Use my current location</button>
+ <p class="err" id="fe"></p><button class="btn pri" onclick="saveFac()">Save facility settings</button></div>`}
+W({detIP:async()=>{try{$('#fi').value=await getIP()}catch(e){toast('Could not reach ipify.')}},
+ detGPS:async()=>{try{const p=await getPos();$('#fa').value=p.coords.latitude.toFixed(6);$('#fo').value=p.coords.longitude.toFixed(6);toast('Location captured (±'+Math.round(p.coords.accuracy)+' m).')}catch(e){toast('Location denied or unavailable.')}},
+ saveFac:async()=>{const g=i=>$(i).value.trim(),n=i=>g(i)===''?null:parseFloat(g(i));
+  const mode=g('#fm'),o={mode,ip:g('#fi'),lat:n('#fa'),lng:n('#fo'),radius:n('#fr')||50,name:FACILITY_NAME};
+  if(mode!=='gps'&&!o.ip)return $('#fe').textContent='Enter the facility public IP.';
+  if(mode!=='ip'&&(o.lat==null||o.lng==null))return $('#fe').textContent='Enter latitude and longitude.';
+  await setDoc(doc(db,'settings','facility'),o);fac=o;$('#fe').textContent='';toast('Facility settings saved.')}});
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
