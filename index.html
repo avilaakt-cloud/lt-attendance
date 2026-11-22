@@ -81,6 +81,7 @@ input,select{font-size:16px;min-height:48px}
 #toast{bottom:calc(92px + env(safe-area-inset-bottom))}
 @media(min-width:760px){.dock,.tabs{left:50%;right:auto;width:min(760px,100%);transform:translateX(-50%);border-radius:14px 14px 0 0}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}.kp{background:#fff;border:1px solid var(--line);border-top:3px solid var(--gold);border-radius:12px;padding:12px}.kp b{display:block;font-size:1.5rem;line-height:1.2}.kp span{color:var(--mute);font-size:.82rem}
 </style>
 </head>
 <body>
@@ -141,14 +142,13 @@ function hav(a,b,c,d){const R=6371000,t=x=>x*Math.PI/180,dl=t(c-a),dn=t(d-b);
 async function getIP(){return (await (await fetch('https://api.ipify.org?format=json')).json()).ip}
 const getPos=()=>new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{enableHighAccuracy:true,timeout:15000,maximumAge:0}));
 async function verify(){
- const m=rules.mode,mine=branches.filter(b=>b.id===me.primaryBranchId||(me.allowedBranchIds||[]).includes(b.id)).sort((a,b)=>(b.id===me.primaryBranchId)-(a.id===me.primaryBranchId));
- const r={ip:null,dist:null,ok:false,branch:null};let p=null;
- if(m!=='gps'){try{r.ip=await getIP()}catch(e){}}
- if(m!=='ip'){try{p=await getPos();r.lat=p.coords.latitude;r.lng=p.coords.longitude}catch(e){}}
- for(const b of mine){
-  const ipOk=!!r.ip&&(b.officeIPs||[]).includes(r.ip),d=p&&b.lat!=null&&b.lat!==''?Math.round(hav(+b.lat,+b.lng,r.lat,r.lng)):null,gOk=d!==null&&d<=(+b.radius||50);
+ const mine=branches.filter(b=>b.id===me.primaryBranchId||(me.allowedBranchIds||[]).includes(b.id)).sort((a,b)=>(b.id===me.primaryBranchId)-(a.id===me.primaryBranchId)),md=b=>b.mode||rules.mode||'either';
+ const r={ip:null,dist:null,ok:false,branch:null,mode:md(mine[0]||{})};let p=null;
+ if(mine.some(b=>md(b)!=='gps')){try{r.ip=await getIP()}catch(e){}}
+ if(mine.some(b=>md(b)!=='ip')){try{p=await getPos();r.lat=p.coords.latitude;r.lng=p.coords.longitude}catch(e){}}
+ for(const b of mine){const m=md(b),ipOk=!!r.ip&&(b.officeIPs||[]).includes(r.ip),d=p&&b.lat!=null&&b.lat!==''?Math.round(hav(+b.lat,+b.lng,r.lat,r.lng)):null,gOk=d!==null&&d<=(+b.radius||50);
   if(r.dist===null&&d!==null)r.dist=d;
-  if(m==='ip'?ipOk:m==='gps'?gOk:m==='both'?ipOk&&gOk:ipOk||gOk){r.ok=true;r.branch=b;r.dist=d;r.method=ipOk&&gOk?'Office_IP+GPS':ipOk?'Office_IP':'GPS';break}}
+  if(m==='ip'?ipOk:m==='gps'?gOk:m==='both'?ipOk&&gOk:ipOk||gOk){r.ok=true;r.branch=b;r.dist=d;r.mode=m;r.method=ipOk&&gOk?'Office_IP+GPS':ipOk?'Office_IP':'GPS';break}}
  return r}
 
 /* ---------- Employee view ---------- */
@@ -166,7 +166,7 @@ async function empView(){
  const check=async()=>{$('#badge').className='badge wait';$('#badge').textContent='Checking location…';ver=await verify();if(first===null)first=ver.ok;
   const none=!branches.some(b=>b.id===me.primaryBranchId),d=[ver.ip?'IP '+ver.ip:'',ver.dist!=null?ver.dist+' m from branch':''].filter(Boolean).join(' · ');
   $('#badge').className='badge '+(ver.ok?'ok':'no');
-  $('#badge').innerHTML=(ver.ok?'Connected to Facility Zone · '+esc(ver.branch.name):rules.mode==='gps'?'Outside Facility - Move closer to your branch':'Outside Facility - Connect to Office Wi-Fi')+`<small>${esc(none?'No branch assigned. Ask your admin.':d||'Location unavailable. Allow location access.')}</small>`;showRec()};
+  $('#badge').innerHTML=(ver.ok?'Connected to Facility Zone · '+esc(ver.branch.name):ver.mode==='gps'?'Outside Facility - Move closer to your branch':'Outside Facility - Connect to Office Wi-Fi')+`<small>${esc(none?'No branch assigned. Ask your admin.':d||'Location unavailable. Allow location access.')}</small>`;showRec()};
  const punch=async out=>{(out?$('#bout'):$('#bin')).disabled=true;
   if(out&&(!rec?.timeIn||Date.now()-rec.timeIn<120000)){toast('Time Out needs a Time In at least 2 minutes earlier.');return showRec()}
   ver=await verify();if(!ver.ok){toast('Verification failed. You are not at an allowed branch.');return check()}
@@ -210,25 +210,62 @@ function adminView(){
 W({setTab:k=>{tab=k;adminView()}});
 const employees=async()=>(await getDocs(collection(db,'users'))).docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.role==='employee').sort((a,b)=>a.name.localeCompare(b.name));
 
-let bf='';
+let bf='',rg='week',mo=new Date();
+const bn=id=>branches.find(x=>x.id===id)?.name||'';
+function rangeDays(){
+ if(rg==='week')return[...Array(7)].map((_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d});
+ const y=mo.getFullYear(),m=mo.getMonth(),a=rg==='c1'?1:16,z=rg==='c1'?15:new Date(y,m+1,0).getDate();
+ return[...Array(z-a+1)].map((_,i)=>new Date(y,m,a+i))}
+function pareto(it,tot){const W=Math.max(360,it.length*90+70),H=230,L=40,T=14,pw=W-L-20,ph=H-34-T,mx=it[0][1];let c=0;const pts=[];
+ const bars=it.map(([k,v],i)=>{const x=L+i*pw/it.length,bw=pw/it.length*.7,h=v/mx*ph;c+=v;pts.push([x+bw/2,T+ph-c/tot*ph]);
+  return `<rect x="${x}" y="${T+ph-h}" width="${bw}" height="${h}" fill="#2f6fe4"/><text x="${x+bw/2}" y="${T+ph-h-3}" font-size="11" text-anchor="middle">${v}</text><text x="${x+bw/2}" y="${H-18}" font-size="10" text-anchor="middle">${esc(k.split(' ')[0])}</text>`}).join('');
+ return `<svg width="${W}" height="${H}" role="img" aria-label="Pareto chart of attendance exceptions"><line x1="${L}" y1="${T+ph}" x2="${W-20}" y2="${T+ph}" stroke="#999"/><line x1="${L}" x2="${W-20}" y1="${T+ph*.2}" y2="${T+ph*.2}" stroke="#d64545" stroke-dasharray="4"/><text x="${W-20}" y="${T+ph*.2-3}" font-size="10" text-anchor="end" fill="#d64545">80% cumulative</text>${bars}<polyline points="${pts.map(q=>q.join(',')).join(' ')}" fill="none" stroke="#e3a008" stroke-width="2"/>${pts.map(q=>`<circle cx="${q[0]}" cy="${q[1]}" r="3" fill="#e3a008"/>`).join('')}</svg><div class="legend"><span class="s-sch">Bars: count</span><span class="s-late">Line: cumulative %</span></div>`}
+function pchart(hs){
+ const wk={};hs.forEach(r=>{const k=ymd(mon(pd(r.date)));(wk[k]=wk[k]||{n:0,o:0}).n++;if(r.inStatus==='On Time'||r.reasonStatus==='approved')wk[k].o++});
+ const ks=Object.keys(wk).sort();if(ks.length<2)return '<small>Needs records from at least 2 weeks.</small>';
+ const N=ks.reduce((s,k)=>s+wk[k].n,0),pb=ks.reduce((s,k)=>s+wk[k].o,0)/N,W=Math.max(360,ks.length*70+60),H=220,L=40,T=14,ph=H-T-34,pw=W-L-20,y=v=>T+ph-v*ph,x=i=>L+(i+.5)*pw/ks.length;
+ const lim=(k,s)=>Math.min(1,Math.max(0,pb+s*3*Math.sqrt(pb*(1-pb)/wk[k].n))),pr=k=>wk[k].o/wk[k].n;
+ const ln=(f,c,d)=>`<polyline points="${ks.map((k,i)=>x(i)+','+y(f(k))).join(' ')}" fill="none" stroke="${c}" stroke-width="${d?1.5:2.5}"${d?' stroke-dasharray="5"':''}/>`;
+ const out=ks.filter(k=>pr(k)<lim(k,-1)).length;
+ return `<svg width="${W}" height="${H}" role="img" aria-label="Weekly punctuality control chart">${[0,.5,1].map(v=>`<text x="4" y="${y(v)+4}" font-size="10">${v*100}%</text><line x1="${L}" x2="${W-20}" y1="${y(v)}" y2="${y(v)}" stroke="#eee"/>`).join('')}${ln(k=>lim(k,1),'#d64545',1)}${ln(k=>lim(k,-1),'#d64545',1)}<line x1="${L}" x2="${W-20}" y1="${y(pb)}" y2="${y(pb)}" stroke="#2e9e5b" stroke-dasharray="2 3"/>${ln(pr,'#2f6fe4')}${ks.map((k,i)=>`<circle cx="${x(i)}" cy="${y(pr(k))}" r="4" fill="${pr(k)<lim(k,-1)?'#d64545':'#2f6fe4'}"/><text x="${x(i)}" y="${H-14}" font-size="10" text-anchor="middle">${k.slice(5)}</text>`).join('')}</svg><div class="legend"><span class="s-on">Center ${Math.round(pb*100)}%</span><span class="s-abs">±3σ limits</span><span class="s-sch">${out} week(s) below lower limit</span></div>`}
 async function dashPane(){
- const days=[...Array(7)].map((_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d}),a=ymd(days[0]),b=ymd(days[6]);
- $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="wk(-7)">‹</button><button class="btn sm" onclick="wk(7)">›</button><button class="btn sm" onclick="wk(0)">This week</button><strong>${a} to ${b}</strong>
+ const days=rangeDays(),a=ymd(days[0]),b=ymd(days[days.length-1]),since=ymd(new Date(Date.now()-56*864e5)),t=todayS();
+ $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="mv(-1)" aria-label="Previous">‹</button><button class="btn sm" onclick="mv(1)" aria-label="Next">›</button>
+ ${[['week','This week'],['c1','1st–15th'],['c2','16th–End']].map(([k,l])=>`<button class="btn sm${rg===k?' pri':''}" onclick="setRg('${k}')">${l}</button>`).join('')}
  <select style="width:auto" onchange="bf=this.value;dashPane()"><option value="">All branches</option>${branches.map(x=>`<option value="${x.id}"${bf===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
- <div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>
- <div class="card"><h2>Reasons awaiting approval</h2><div id="pa"></div></div>`;
- const [e0,snap]=await Promise.all([employees(),getDocs(query(collection(db,'attendance'),where('date','>=',a),where('date','<=',b)))]);
- const emps=e0.filter(e=>!bf||e.primaryBranchId===bf||(e.allowedBranchIds||[]).includes(bf)),recs={},pend=[];
- snap.docs.forEach(d=>{const r={id:d.id,...d.data()};if(bf&&r.branchId!==bf)return;recs[r.uid+'|'+r.date]=r;if(r.reasonStatus==='pending')pend.push(r)});
- const now=new Date(),t=ymd(now);
- $('#gr').innerHTML=emps.length?`<table><tr><th class="n">Employee</th>${days.map(d=>`<th>${DAYS[d.getDay()]} ${d.getDate()}</th>`).join('')}</tr>`+emps.map(e=>`<tr><td class="n">${esc(e.name)}<small style="display:block;color:var(--mute);font-weight:400">${esc(e.start)}–${esc(e.end)}</small></td>`+days.map(d=>{
-  const s=ymd(d),r=recs[e.uid+'|'+s];
-  if(r){const lab=r.outStatus==='Early Out'?'Early Out':r.inStatus;return `<td class="c ${cls(r)}" title="${esc(r.branchName||'')}">${lab}<br>${hm(r.timeIn)}${r.timeOut?'–'+hm(r.timeOut):'–?'}</td>`}
+ <strong>${a} to ${b}</strong><div class="bar" style="margin:10px 0 0"><button class="btn sm" onclick="expPay()">Payroll CSV</button><button class="btn sm" onclick="expTel()">Telemetry CSV</button></div></div>
+ <div class="kpi" id="kpi"></div>
+ <div class="card"><div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>
+ <div class="card"><h2>Reasons awaiting approval</h2><div id="pa"></div></div>
+ <div class="card"><h2>Exceptions Pareto</h2><div class="scroll" id="par"></div></div><div class="card"><h2>Weekly punctuality (last 8 weeks)</h2><div class="scroll" id="pch"></div></div>`;
+ const q=(x,y)=>getDocs(query(collection(db,'attendance'),where('date','>=',x),where('date','<=',y)));
+ const [e0,snap,hsn]=await Promise.all([employees(),q(a,b),q(since,t)]);
+ const inBr=r=>!bf||r.branchId===bf,emps=e0.filter(e=>!bf||e.primaryBranchId===bf||(e.allowedBranchIds||[]).includes(bf));
+ const recs={},pend=[],all=[],ST={},EX={},ex=r=>r.reasonStatus==='approved',now=new Date();
+ snap.docs.forEach(d=>{const r={id:d.id,...d.data()};if(!inBr(r))return;recs[r.uid+'|'+r.date]=r;all.push(r);if(r.reasonStatus==='pending')pend.push(r)});
+ const bump=k=>{if(k)EX[k]=(EX[k]||0)+1};
+ const cell=(e,d)=>{const s=ymd(d),r=recs[e.uid+'|'+s],S=ST[e.uid];
+  if(r){S.days++;S.net+=r.netHours||0;const m=(r.lateMinutes||0)+(r.undertimeMinutes||0);if(ex(r))S.exMin+=m;else{S.late+=r.lateMinutes||0;S.under+=r.undertimeMinutes||0}
+   bump(r.lateReason);bump(r.outReason);const lab=r.outStatus==='Early Out'?'Early Out':r.inStatus;
+   return `<td class="c ${cls(r)}" title="${esc(r.branchName||'')}">${lab}<br>${hm(r.timeIn)}${r.timeOut?'–'+hm(r.timeOut):'–?'}</td>`}
   if(!e.days.includes(d.getDay()))return `<td class="c s-off">–</td>`;
-  const past=s<t||(s===t&&mins(now)>tm(e.end));return past?`<td class="c s-abs">Absent</td>`:`<td class="c s-sch">${esc(e.start)}</td>`}).join('')+`</tr>`).join('')+`</table>`:'No employees for this view.';
- $('#pa').innerHTML=pend.length?pend.map(r=>`<div class="row"><div class="w"><strong>${esc(r.name)}</strong> · ${r.date}<small>${esc(r.branchName||'')}${r.lateMinutes?' · Late '+r.lateMinutes+' min: '+esc(r.lateReason):''}${r.undertimeMinutes?' · Undertime '+r.undertimeMinutes+' min: '+esc(r.outReason):''}</small></div><button class="btn sm" onclick="appr('${r.id}',1)">Approve</button><button class="btn sm del" onclick="appr('${r.id}',0)">Reject</button></div>`).join(''):'<small>Nothing pending.</small>'}
-W({appr:async(id,ok)=>{await setDoc(doc(db,'attendance',id),{reasonStatus:ok?'approved':'rejected'},{merge:true});toast(ok?'Approved.':'Rejected.');dashPane()}});
-W({wk:n=>{if(!n)weekStart=mon(new Date());else weekStart.setDate(weekStart.getDate()+n);dashPane()}});
+  if(s<t||(s===t&&mins(now)>tm(e.end))){S.abs++;bump('Absent');return `<td class="c s-abs">Absent</td>`}
+  return `<td class="c s-sch">${esc(e.start)}</td>`};
+ emps.forEach(e=>ST[e.uid]={name:e.name,br:bn(e.primaryBranchId),days:0,abs:0,late:0,under:0,exMin:0,net:0});
+ $('#gr').innerHTML=emps.length?`<table><tr><th class="n">Employee</th>${days.map(d=>`<th>${DAYS[d.getDay()]} ${d.getDate()}</th>`).join('')}</tr>`+emps.map(e=>`<tr><td class="n">${esc(e.name)}<small style="display:block;color:var(--mute);font-weight:400">${esc(e.start)}–${esc(e.end)}</small></td>${days.map(d=>cell(e,d)).join('')}</tr>`).join('')+`</table>`:'No employees for this view.';
+ const n=all.length,S=Object.values(ST),sum=k=>S.reduce((s,x)=>s+x[k],0);
+ $('#kpi').innerHTML=[[n?Math.round(all.filter(r=>r.inStatus==='On Time'||ex(r)).length/n*100)+'%':'–','Overall punctuality'],[sum('late'),'Total late minutes'],[sum('net').toFixed(1),'Net hours rendered'],[n?Math.round(all.filter(r=>r.firstPassOk).length/n*100)+'%':'–','First-pass location verification']].map(([v,l])=>`<div class="kp"><b>${v}</b><span>${l}</span></div>`).join('');
+ $('#pa').innerHTML=pend.length?pend.map(r=>`<div class="row"><div class="w"><strong>${esc(r.name)}</strong> · ${r.date}<small>${esc(r.branchName||'')}${r.lateMinutes?' · Late '+r.lateMinutes+' min: '+esc(r.lateReason):''}${r.undertimeMinutes?' · Undertime '+r.undertimeMinutes+' min: '+esc(r.outReason):''}</small></div><button class="btn sm" onclick="appr('${r.id}',1)">Approve</button><button class="btn sm del" onclick="appr('${r.id}',0)">Reject</button></div>`).join(''):'<small>Nothing pending.</small>';
+ const it=Object.entries(EX).sort((x,y)=>y[1]-x[1]),tot=it.reduce((s,x)=>s+x[1],0);
+ $('#par').innerHTML=tot?pareto(it,tot):'<small>No exceptions in this range.</small>';
+ $('#pch').innerHTML=pchart(hsn.docs.map(d=>d.data()).filter(inBr));
+ window._d={a,b,ST,all}}
+const csv=rows=>'\ufeff'+rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+function dl(name,rows){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv(rows)],{type:'text/csv;charset=utf-8'}));a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+W({setRg:k=>{rg=k;dashPane()},mv:n=>{if(rg==='week')weekStart.setDate(weekStart.getDate()+7*n);else mo=new Date(mo.getFullYear(),mo.getMonth()+n,1);dashPane()},
+ appr:async(id,ok)=>{await setDoc(doc(db,'attendance',id),{reasonStatus:ok?'approved':'rejected'},{merge:true});toast(ok?'Approved.':'Rejected.');dashPane()},
+ expPay:()=>{const D=window._d;if(!D)return;dl(`payroll_${D.a}_to_${D.b}.csv`,[['Employee','Primary branch','Period start','Period end','Days present','Absent days','Late minutes (counted)','Undertime minutes (counted)','Excused minutes (approved)','Net hours'],...Object.values(D.ST).map(s=>[s.name,s.br,D.a,D.b,s.days,s.abs,s.late,s.under,s.exMin,s.net.toFixed(2)])])},
+ expTel:()=>{const D=window._d;if(!D)return;dl(`telemetry_${D.a}_to_${D.b}.csv`,[['Date','Employee','Branch','Time In','Time Out','In status','Out status','Late min','Undertime min','Net hours','Late reason','Out reason','Approval','Verification','Cycle seconds','Location retries','First pass OK','Manual override'],...D.all.map(r=>[r.date,r.name,r.branchName,hm(r.timeIn),r.timeOut?hm(r.timeOut):'',r.inStatus,r.outStatus||'',r.lateMinutes??'',r.undertimeMinutes??'',r.netHours??'',r.lateReason||'',r.outReason||'',r.reasonStatus||'',r.verificationMethod||'',r.clockInCycleSeconds??'',r.locationRetries??'',r.firstPassOk,r.manualOverride])])}});
 
 const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
 async function empPane(){
@@ -261,13 +298,13 @@ let eb=null;
 function facPane(){
  const r=rules,b=eb||{};
  $('#pane').innerHTML=`<div class="card"><h2>Attendance rules</h2><div class="grid">
- <div><label class="l">Verification method</label><select id="fm">${[['either','Wi-Fi IP or GPS (either passes)'],['both','Wi-Fi IP and GPS (both required)'],['ip','Wi-Fi IP only'],['gps','GPS only']].map(([v,l])=>`<option value="${v}"${r.mode===v?' selected':''}>${l}</option>`).join('')}</select></div>
  <div><label class="l">Grace period (minutes)</label><input id="rg" type="number" value="${r.grace}"></div>
  <div><label class="l">Unpaid break (minutes)</label><input id="rb" type="number" value="${r.breakMin}"></div></div>
  <button class="btn pri" style="margin-top:10px" onclick="saveRules()">Save rules</button></div>
  <div class="card"><h2>${eb?'Edit branch':'Add branch'}</h2><div class="grid">
  <div><label class="l">Branch name</label><input id="bn" value="${esc(b.name)}" placeholder="Little Trikes Academy - Bin Sagar Tower"></div>
  <div><label class="l">Address</label><input id="ba" value="${esc(b.address)}" placeholder="AD 46 Najda St, Abu Dhabi, UAE"></div>
+ <div><label class="l">Verification for this branch</label><select id="bm">${[['either','Wi-Fi IP or GPS (either passes)'],['both','Wi-Fi IP and GPS (both required)'],['ip','Wi-Fi IP only'],['gps','GPS only']].map(([v,l])=>`<option value="${v}"${(b.mode||rules.mode||'either')===v?' selected':''}>${l}</option>`).join('')}</select></div>
  <div><label class="l">Office public IPs (comma-separated)</label><input id="bi" value="${esc((b.officeIPs||[]).join(', '))}"></div>
  <div><label class="l">Latitude</label><input id="bla" value="${esc(b.lat)}" inputmode="decimal"></div>
  <div><label class="l">Longitude</label><input id="blo" value="${esc(b.lng)}" inputmode="decimal"></div>
@@ -275,13 +312,13 @@ function facPane(){
  <p style="color:var(--mute);font-size:.88rem">Standing at the branch? Capture its values:</p>
  <button class="btn" onclick="detIP()">Add my public IP</button> <button class="btn" onclick="detGPS()">Use my current location</button>
  <p class="err" id="fe"></p><button class="btn pri" onclick="saveBranch()">Save branch</button> ${eb?'<button class="btn" onclick="eb=null;facPane()">Cancel</button>':''}</div>
- <div class="card"><h2>Branches</h2>${branches.length?branches.map(x=>`<div class="row"><div class="w"><strong>${esc(x.name)}</strong><small>${esc(x.address)} · ${(x.officeIPs||[]).length} IP(s) · ${x.radius} m</small></div><button class="btn sm" onclick="editBr('${x.id}')">Edit</button><button class="btn sm del" onclick="delBr('${x.id}')">Delete</button></div>`).join(''):'<small>No branches yet.</small>'}</div>`}
+ <div class="card"><h2>Branches</h2>${branches.length?branches.map(x=>`<div class="row"><div class="w"><strong>${esc(x.name)}</strong><small>${esc(x.address)} · ${({either:'IP or GPS',both:'IP + GPS',ip:'IP only',gps:'GPS only'})[x.mode||rules.mode||'either']} · ${(x.officeIPs||[]).length} IP(s) · ${x.radius} m</small></div><button class="btn sm" onclick="editBr('${x.id}')">Edit</button><button class="btn sm del" onclick="delBr('${x.id}')">Delete</button></div>`).join(''):'<small>No branches yet.</small>'}</div>`}
 W({detIP:async()=>{try{const ip=await getIP(),el=$('#bi'),l=el.value.split(',').map(x=>x.trim()).filter(Boolean);if(!l.includes(ip))l.push(ip);el.value=l.join(', ')}catch(e){toast('Could not reach ipify.')}},
  detGPS:async()=>{try{const p=await getPos();$('#bla').value=p.coords.latitude.toFixed(6);$('#blo').value=p.coords.longitude.toFixed(6);toast('Location captured (±'+Math.round(p.coords.accuracy)+' m).')}catch(e){toast('Location denied or unavailable.')}},
  eb:null,editBr:id=>{eb=branches.find(x=>x.id===id);facPane();scrollTo(0,0)},
- saveRules:async()=>{const o={mode:$('#fm').value,grace:+$('#rg').value||0,breakMin:+$('#rb').value||0};await setDoc(doc(db,'settings','rules'),o);rules=o;toast('Rules saved.')},
+ saveRules:async()=>{const o={mode:rules.mode,grace:+$('#rg').value||0,breakMin:+$('#rb').value||0};await setDoc(doc(db,'settings','rules'),o);rules=o;toast('Rules saved.')},
  saveBranch:async()=>{const g=i=>$(i).value.trim(),n=i=>g(i)===''?null:parseFloat(g(i)),ips=g('#bi').split(',').map(x=>x.trim()).filter(Boolean),name=g('#bn')||$('#bn').placeholder,address=g('#ba')||$('#ba').placeholder;
-  const o={name,address,officeIPs:ips,lat:n('#bla'),lng:n('#blo'),radius:n('#br')||50},m=rules.mode;
+  const m=$('#bm').value,o={name,address,mode:m,officeIPs:ips,lat:n('#bla'),lng:n('#blo'),radius:n('#br')||50};
   if(m!=='gps'&&!ips.length)return $('#fe').textContent='Add at least one office public IP.';
   if(m!=='ip'&&(o.lat==null||o.lng==null))return $('#fe').textContent='Enter latitude and longitude.';
   const id=eb?.id||'b'+Date.now().toString(36);await setDoc(doc(db,'branches',id),o);await loadCfg();eb=null;toast('Branch saved.');facPane()},

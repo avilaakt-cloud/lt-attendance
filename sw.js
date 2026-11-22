@@ -1,4 +1,4 @@
-const CACHE = 'attendance-v3';
+const CACHE = 'attendance-v4';
 const SHELL = ['./', './index.html', './manifest.json', './logo.png', './icon-192.png'];
 
 self.addEventListener('install', e => {
