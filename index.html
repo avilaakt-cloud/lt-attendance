@@ -70,7 +70,7 @@ input,select{font-size:16px;min-height:48px}
 .btn.pri{background:var(--navy);border-color:var(--navy)}
 .card{border-top:3px solid var(--gold)}
 .days label{padding:11px 15px;min-height:44px}
-.tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:#fff;border-top:3px solid var(--gold);padding:6px 8px calc(6px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,1fr);gap:6px;z-index:5}
+.tabs{position:fixed;left:0;right:0;bottom:0;margin:0;background:#fff;border-top:3px solid var(--gold);padding:6px 8px calc(6px + env(safe-area-inset-bottom));display:grid;grid-auto-flow:column;grid-auto-columns:minmax(96px,1fr);overflow-x:auto;gap:6px;z-index:5}
 .tab{text-align:center;font-size:.95rem}.tab[aria-selected=true]{background:var(--navy)}
 .wrap:has(.tabs){padding-bottom:96px}
 .dock{position:fixed;left:0;right:0;bottom:0;margin:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:#fffffff2;backdrop-filter:blur(8px);border-top:3px solid var(--gold);z-index:5}
@@ -81,6 +81,8 @@ input,select{font-size:16px;min-height:48px}
 #toast{bottom:calc(92px + env(safe-area-inset-bottom))}
 @media(min-width:760px){.dock,.tabs{left:50%;right:auto;width:min(760px,100%);transform:translateX(-50%);border-radius:14px 14px 0 0}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+.lf{display:grid;gap:10px}.pwb{position:relative}.pwb input{padding-right:84px}.pwb .btn{position:absolute;right:4px;top:4px;min-height:40px}
+.pt{min-width:980px;border-spacing:0}.pt th,.pt td{padding:8px 8px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}.pt th.n,.pt td.n{text-align:left}.pt tfoot td{font-weight:700;border-top:2px solid var(--navy)}.pt input{width:76px;min-height:40px;padding:4px 8px;text-align:right}.pt tr.flag td{background:var(--y-l)}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}.kp{background:#fff;border:1px solid var(--line);border-top:3px solid var(--gold);border-radius:12px;padding:12px}.kp b{display:block;font-size:1.5rem;line-height:1.2}.kp span{color:var(--mute);font-size:.82rem}
 </style>
 </head>
@@ -121,17 +123,19 @@ onAuthStateChanged(auth,async u=>{
 });
 function loginView(err=''){
  $('#app').innerHTML=`<div class="login"><div class="card"><div class="brand"><img src="logo.png" alt="Little Trikes Academy logo"><h1>Little Trikes Academy</h1><p>Staff Attendance</p></div>
- <input id="em" type="email" placeholder="Email" autocomplete="username"><input id="pw" type="password" placeholder="Password" autocomplete="current-password">
- <div class="err" id="le">${esc(err)}</div><button class="btn pri" style="width:100%" id="lg">Sign in</button></div></div>`;
+ <form id="lf" class="lf" action="#"><input id="em" name="username" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" spellcheck="false"><div class="pwb"><input id="pw" name="password" type="password" placeholder="Password" autocomplete="current-password"><button type="button" class="btn sm" id="sp">Show</button></div>
+ <div class="err" id="le">${esc(err)}</div><button class="btn pri" style="width:100%" id="lg" type="submit">Sign in</button></form></div></div>`;
  const go=async()=>{try{await signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value)}catch(e){$('#le').textContent='Wrong email or password.'}};
- $('#lg').onclick=go;$('#pw').onkeydown=e=>e.key==='Enter'&&go()}
+ $('#lf').onsubmit=e=>{e.preventDefault();go()};
+ $('#sp').onclick=()=>{const p=$('#pw'),h=p.type==='password';p.type=h?'text':'password';$('#sp').textContent=h?'Hide':'Show';p.focus()}}
 const header=r=>`<div class="top"><img src="logo.png" alt=""><b>${esc(me.name)}<small>${r} · Little Trikes Academy</small></b><button class="btn sm" onclick="signOutNow()">Sign out</button></div>`;
 W({signOutNow:()=>signOut(auth)});
 
 /* ---------- Rules, status & verification ---------- */
-let rules={grace:15,breakMin:60,mode:'either'},branches=[],retries=0,first=null;const T0=Date.now();
+let rules={grace:15,breakMin:60,mode:'either'},branches=[],grades=[],retries=0,first=null;const T0=Date.now();
 async function loadCfg(){const r=await getDoc(doc(db,'settings','rules'));rules={...rules,...(r.exists()?r.data():{})};
- branches=(await getDocs(collection(db,'branches'))).docs.map(d=>({id:d.id,...d.data()}))}
+ branches=(await getDocs(collection(db,'branches'))).docs.map(d=>({id:d.id,...d.data()}));
+ if(me?.role==='admin'){try{grades=(await getDocs(collection(db,'salaryGrades'))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}))}catch(e){grades=[];toast('Cannot read salaryGrades. Update Firestore rules.')}}}
 const cls=r=>!r?'':r.outStatus==='Early Out'?'s-early':r.inStatus==='Late'?'s-late':'s-on';
 const REASONS=['Traffic / Transit','Official Errand','Medical','System Issue','Other (unexcused)'];
 const askReason=t=>new Promise(res=>{const d=document.createElement('div');d.className='ov';
@@ -205,8 +209,8 @@ function setupReminders(){
 /* ---------- Admin view ---------- */
 function adminView(){
  $('#app').innerHTML=header('Admin')+`<div class="wrap"><div class="tabs" role="tablist">
- ${[['dash','Dashboard'],['emp','Employees'],['fac','Branches']].map(([k,l])=>`<button class="tab" role="tab" aria-selected="${tab===k}" onclick="setTab('${k}')">${l}</button>`).join('')}</div><div id="pane"></div></div>`;
- ({dash:dashPane,emp:empPane,fac:facPane})[tab]()}
+ ${[['dash','Dashboard'],['pay','Payroll'],['emp','Employees'],['sg','Salary Grades'],['fac','Branches']].map(([k,l])=>`<button class="tab" role="tab" aria-selected="${tab===k}" onclick="setTab('${k}')">${l}</button>`).join('')}</div><div id="pane"></div></div>`;
+ ({dash:dashPane,pay:payPane,emp:empPane,sg:gradePane,fac:facPane})[tab]()}
 W({setTab:k=>{tab=k;adminView()}});
 const employees=async()=>(await getDocs(collection(db,'users'))).docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.role==='employee').sort((a,b)=>a.name.localeCompare(b.name));
 
@@ -233,7 +237,7 @@ async function dashPane(){
  $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="mv(-1)" aria-label="Previous">‹</button><button class="btn sm" onclick="mv(1)" aria-label="Next">›</button>
  ${[['week','This week'],['c1','1st–15th'],['c2','16th–End']].map(([k,l])=>`<button class="btn sm${rg===k?' pri':''}" onclick="setRg('${k}')">${l}</button>`).join('')}
  <select style="width:auto" onchange="bf=this.value;dashPane()"><option value="">All branches</option>${branches.map(x=>`<option value="${x.id}"${bf===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
- <strong>${a} to ${b}</strong><div class="bar" style="margin:10px 0 0"><button class="btn sm" onclick="expPay()">Payroll CSV</button><button class="btn sm" onclick="expTel()">Telemetry CSV</button></div></div>
+ <strong>${a} to ${b}</strong><div class="bar" style="margin:10px 0 0"><button class="btn sm" onclick="expPay()">Attendance summary CSV</button><button class="btn sm" onclick="expTel()">Telemetry CSV</button></div></div>
  <div class="kpi" id="kpi"></div>
  <div class="card"><div class="legend"><span class="s-on">On Time</span><span class="s-late">Late</span><span class="s-early">Early Out</span><span class="s-abs">Absent</span><span class="s-sch">Scheduled</span></div><div class="scroll" id="gr">Loading…</div></div>
  <div class="card"><h2>Reasons awaiting approval</h2><div id="pa"></div></div>
@@ -267,6 +271,65 @@ W({setRg:k=>{rg=k;dashPane()},mv:n=>{if(rg==='week')weekStart.setDate(weekStart.
  expPay:()=>{const D=window._d;if(!D)return;dl(`payroll_${D.a}_to_${D.b}.csv`,[['Employee','Primary branch','Period start','Period end','Days present','Absent days','Late minutes (counted)','Undertime minutes (counted)','Excused minutes (approved)','Net hours'],...Object.values(D.ST).map(s=>[s.name,s.br,D.a,D.b,s.days,s.abs,s.late,s.under,s.exMin,s.net.toFixed(2)])])},
  expTel:()=>{const D=window._d;if(!D)return;dl(`telemetry_${D.a}_to_${D.b}.csv`,[['Date','Employee','Branch','Time In','Time Out','In status','Out status','Late min','Undertime min','Net hours','Late reason','Out reason','Approval','Verification','Cycle seconds','Location retries','First pass OK','Manual override'],...D.all.map(r=>[r.date,r.name,r.branchName,hm(r.timeIn),r.timeOut?hm(r.timeOut):'',r.inStatus,r.outStatus||'',r.lateMinutes??'',r.undertimeMinutes??'',r.netHours??'',r.lateReason||'',r.outReason||'',r.reasonStatus||'',r.verificationMethod||'',r.clockInCycleSeconds??'',r.locationRetries??'',r.firstPassOk,r.manualOverride])])}});
 
+/* ---------- Salary grades ---------- */
+const CUR='AED',f2=n=>(Math.round((+n||0)*100)/100).toFixed(2),BASIS={daily:'Daily',monthly:'Monthly',hourly:'Hourly'};
+let eg=null;
+function gradePane(){
+ const g=eg||{};
+ $('#pane').innerHTML=`<div class="card"><h2>${eg?'Edit salary grade':'Add salary grade'}</h2><div class="grid">
+ <div><label class="l">Grade code</label><input id="sgc" value="${esc(g.code)}" placeholder="SG-1"></div>
+ <div><label class="l">Title</label><input id="sgt" value="${esc(g.title)}" placeholder="Teacher Aide"></div>
+ <div><label class="l">Pay basis</label><select id="sgb">${Object.entries(BASIS).map(([v,l])=>`<option value="${v}"${(g.payBasis||'daily')===v?' selected':''}>${l}</option>`).join('')}</select></div>
+ <div><label class="l">Base rate (${CUR})</label><input id="sgr" type="number" step="0.01" inputmode="decimal" value="${g.baseRate??''}"></div>
+ <div><label class="l">Standard daily hours</label><input id="sgh" type="number" step="0.25" inputmode="decimal" value="${g.standardDailyHours||8}"></div>
+ <div><label class="l">Working days per month (monthly basis)</label><input id="sgw" type="number" inputmode="numeric" value="${g.workDaysPerMonth||26}"></div></div>
+ <p style="color:var(--mute);font-size:.88rem">Daily rate = base ÷ working days (monthly), base (daily), or base × daily hours (hourly). Hourly rate = daily rate ÷ daily hours. Minute rate = hourly rate ÷ 60.</p>
+ <p class="err" id="sge"></p><button class="btn pri" onclick="saveGrade()">${eg?'Save changes':'Add grade'}</button> ${eg?'<button class="btn" onclick="cancelGrade()">Cancel</button>':''}</div>
+ <div class="card"><h2>Salary grades</h2>${grades.length?grades.map(x=>`<div class="row"><div class="w"><strong>${esc(x.code)} · ${esc(x.title)}</strong><small>${BASIS[x.payBasis]||''} · ${CUR} ${f2(x.baseRate)} · ${x.standardDailyHours} h/day${x.payBasis==='monthly'?' · '+x.workDaysPerMonth+' days/mo':''}</small></div><button class="btn sm" onclick="editGrade('${x.id}')">Edit</button><button class="btn sm del" onclick="delGrade('${x.id}')">Delete</button></div>`).join(''):'<small>No grades yet.</small>'}</div>`}
+W({editGrade:id=>{eg=grades.find(x=>x.id===id);gradePane();scrollTo(0,0)},cancelGrade:()=>{eg=null;gradePane()},cancelEmp:()=>{editing=null;empPane()},cancelBr:()=>{eb=null;facPane()},
+ saveGrade:async()=>{const g=i=>$(i).value.trim(),code=g('#sgc'),title=g('#sgt'),rate=parseFloat(g('#sgr')),hrs=parseFloat(g('#sgh')),wd=parseInt(g('#sgw'));
+  if(!code||!title)return $('#sge').textContent='Enter a grade code and title.';
+  if(!(rate>=0)||!(hrs>0)||!(wd>0))return $('#sge').textContent='Base rate, daily hours and working days must be valid numbers.';
+  try{const id=eg?.id||'sg'+Date.now().toString(36);
+   await setDoc(doc(db,'salaryGrades',id),{code,title,payBasis:$('#sgb').value,baseRate:rate,standardDailyHours:hrs,workDaysPerMonth:wd});
+   await loadCfg();eg=null;toast('Grade saved.');gradePane()}catch(e){$('#sge').textContent='Failed: '+(e.code||e.message)}},
+ delGrade:async id=>{if(!confirm('Delete this grade? Employees assigned to it will have no rate until reassigned.'))return;await deleteDoc(doc(db,'salaryGrades',id));await loadCfg();gradePane()}});
+
+/* ---------- Payroll engine ---------- */
+let pm=new Date(),pc=new Date().getDate()<=15?'c1':'c2';
+function payRange(){const y=pm.getFullYear(),m=pm.getMonth(),a=pc==='c1'?1:16,z=pc==='c1'?15:new Date(y,m+1,0).getDate();return[new Date(y,m,a),new Date(y,m,z)]}
+async function payPane(){
+ const [d0,d1]=payRange(),a=ymd(d0),b=ymd(d1),t=todayS(),now=new Date();
+ $('#pane').innerHTML=`<div class="card"><div class="bar"><button class="btn sm" onclick="pmv(-1)" aria-label="Previous cutoff">‹</button><button class="btn sm" onclick="pmv(1)" aria-label="Next cutoff">›</button>
+ ${[['c1','1st–15th'],['c2','16th–End']].map(([k,l])=>`<button class="btn sm${pc===k?' pri':''}" onclick="setPc('${k}')">${l}</button>`).join('')}</div>
+ <strong>${a} to ${b}</strong> <small style="color:var(--mute)">· ${pm.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</small><div class="bar" style="margin:10px 0 0"><button class="btn sm" onclick="expPayroll()">Payroll CSV</button></div></div>
+ <div class="card"><div class="scroll" id="pt">Loading…</div></div>
+ <div class="card"><h2>How it is computed</h2><ul style="margin:0;padding-left:18px;color:var(--mute);font-size:.9rem"><li><b>Gross:</b> daily = scheduled days × daily rate · monthly = base ÷ 2 per cutoff · hourly = (net hours + paid leave days × daily hours) × hourly rate. Future days in an open cutoff are included, so gross is the full-cutoff figure.</li><li><b>Deductions:</b> unexcused late minutes and undertime minutes × minute rate, plus (absent days − paid leave days) × daily rate. Reasons approved on the dashboard are excused. Hourly staff are paid by net hours, so they get no late/undertime/absent deduction.</li><li><b>Net pay</b> = Gross − Late − Undertime − Absent/LWOP. Paid leave days are typed in per employee for this cutoff.</li></ul></div>`;
+ const [emps,snap,ls]=await Promise.all([employees(),getDocs(query(collection(db,'attendance'),where('date','>=',a),where('date','<=',b))),getDocs(query(collection(db,'leaves'),where('periodStart','==',a)))]);
+ const recs={},lv={};snap.docs.forEach(d=>{const r=d.data();recs[r.uid+'|'+r.date]=r});ls.docs.forEach(d=>{const l=d.data();lv[l.uid]=+l.paidLeaveDays||0});
+ const days=[];for(let d=new Date(d0);d<=d1;d.setDate(d.getDate()+1))days.push(new Date(d));
+ const R=emps.map(e=>{
+  const g=grades.find(x=>x.id===e.salaryGradeId),ov=e.customRateOverride,rate=ov!=null&&ov!==''?+ov:g?+g.baseRate:null,basis=g?.payBasis||'daily',hrs=+g?.standardDailyHours||8,wd=+g?.workDaysPerMonth||26;
+  let present=0,net=0,late=0,under=0,absRaw=0,sched=0;
+  days.forEach(d=>{const s=ymd(d),r=recs[e.uid+'|'+s],works=e.days.includes(d.getDay());if(works)sched++;
+   if(r){present++;net+=r.netHours||0;if(r.reasonStatus!=='approved'){late+=r.lateMinutes||0;under+=r.undertimeMinutes||0}}
+   else if(works&&(s<t||(s===t&&mins(now)>tm(e.end))))absRaw++});
+  const pl=lv[e.uid]||0,absent=Math.max(0,absRaw-pl),o={uid:e.uid,name:e.name,grade:g?.code||'',basis,rate,present,pl,net:Math.round(net*100)/100,late,under,absent,hrs};
+  if(rate==null)return{...o,flag:true};
+  const hourly=basis==='hourly',daily=basis==='monthly'?rate/wd:hourly?rate*hrs:rate,hr=hourly?rate:daily/hrs,mr=hr/60;
+  const gross=hourly?(net+pl*hrs)*hr:basis==='monthly'?rate/2:sched*daily,ld=hourly?0:late*mr,ud=hourly?0:under*mr,ad=hourly?0:absent*daily;
+  return{...o,daily,hr,mr,payable:hourly?net+pl*hrs:present+pl,gross,ld,ud,ad,total:Math.max(0,gross-ld-ud-ad)}});
+ const S=k=>R.reduce((s,r)=>s+(r[k]||0),0);
+ $('#pt').innerHTML=R.length?`<table class="pt"><thead><tr><th class="n">Employee</th><th>Grade</th><th>Rate</th><th>Daily</th><th>Hourly</th><th>Minute</th><th>Payable</th><th>Paid leave</th><th>Late min</th><th>Under min</th><th>Absent d</th><th>Gross</th><th>Late ded.</th><th>Under ded.</th><th>Absent ded.</th><th>Net pay</th></tr></thead><tbody>`+
+  R.map(r=>r.flag?`<tr class="flag"><td class="n">${esc(r.name)}</td><td colspan="15" style="text-align:left">No salary grade or rate override. Assign one under Employees.</td></tr>`:
+  `<tr><td class="n">${esc(r.name)}</td><td>${esc(r.grade||'Override')}<small> ${r.basis}</small></td><td>${f2(r.rate)}</td><td>${f2(r.daily)}</td><td>${f2(r.hr)}</td><td>${(Math.round(r.mr*10000)/10000).toFixed(4)}</td><td>${f2(r.payable)} ${r.basis==='hourly'?'h':'d'}</td><td><input type="number" min="0" step="0.5" inputmode="decimal" value="${r.pl}" aria-label="Paid leave days for ${esc(r.name)}" onchange="saveLeave('${r.uid}','${a}','${b}',this.value)"></td><td>${r.late}</td><td>${r.under}</td><td>${r.absent}</td><td>${f2(r.gross)}</td><td>${f2(r.ld)}</td><td>${f2(r.ud)}</td><td>${f2(r.ad)}</td><td><b>${f2(r.total)}</b></td></tr>`).join('')+
+  `</tbody><tfoot><tr><td class="n" colspan="11">Total (${CUR})</td><td>${f2(S('gross'))}</td><td>${f2(S('ld'))}</td><td>${f2(S('ud'))}</td><td>${f2(S('ad'))}</td><td>${f2(S('total'))}</td></tr></tfoot></table>`:'No employees yet.';
+ window._p={a,b,R}}
+W({pmv:n=>{if(n>0){if(pc==='c1')pc='c2';else{pc='c1';pm=new Date(pm.getFullYear(),pm.getMonth()+1,1)}}else{if(pc==='c2')pc='c1';else{pc='c2';pm=new Date(pm.getFullYear(),pm.getMonth()-1,1)}}payPane()},
+ setPc:k=>{pc=k;payPane()},
+ saveLeave:async(uid,a,b,v)=>{try{await setDoc(doc(db,'leaves',uid+'_'+a),{uid,periodStart:a,periodEnd:b,paidLeaveDays:Math.max(0,parseFloat(v)||0)});toast('Paid leave saved.')}catch(e){toast('Could not save: '+e.code)}payPane()},
+ expPayroll:()=>{const P=window._p;if(!P)return;dl(`payroll_${P.a}_to_${P.b}.csv`,[['Employee','Salary grade','Pay basis','Base rate','Daily rate','Hourly rate','Minute rate','Payable days/hours','Paid leave days','Net hours','Late minutes (unexcused)','Undertime minutes (unexcused)','Absent/LWOP days','Gross pay','Late deduction','Undertime deduction','Absent/LWOP deduction','Net pay'],...P.R.map(r=>r.flag?[r.name,'(none)','','','','','','','','','','','','','','','','']:[r.name,r.grade||'Override',r.basis,f2(r.rate),f2(r.daily),f2(r.hr),r.mr.toFixed(4),f2(r.payable),r.pl,r.net,r.late,r.under,r.absent,f2(r.gross),f2(r.ld),f2(r.ud),f2(r.ad),f2(r.total)])])}});
+
 const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
 async function empPane(){
  const e=editing;
@@ -276,11 +339,11 @@ async function empPane(){
  ${e?'':`<div><label class="l">Temporary password (6+ chars)</label><input id="p" type="text"></div>`}
  <div><label class="l">Start time</label><input id="s" type="time" value="${e?.start||'08:00'}"></div>
  <div><label class="l">End time</label><input id="en" type="time" value="${e?.end||'17:00'}"></div></div>
- <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div><label class="l" style="margin-top:10px">Primary branch</label><select id="pb"><option value="">Select…</option>${branches.map(x=>`<option value="${x.id}"${e?.primaryBranchId===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Also allowed to clock in at (floating or relieving)</label><div class="days" id="ab">${branches.map(x=>`<label><input type="checkbox" value="${x.id}"${(e?.allowedBranchIds||[]).includes(x.id)?' checked':''}>${esc(x.name)}</label>`).join('')||'<small>Add branches first.</small>'}</div>
- <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="editing=null;setTab(\'emp\')">Cancel</button>':''}</div>
+ <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div><label class="l" style="margin-top:10px">Primary branch</label><select id="pb"><option value="">Select…</option>${branches.map(x=>`<option value="${x.id}"${e?.primaryBranchId===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Salary grade</label><select id="sg"><option value="">None (assign later)</option>${grades.map(x=>`<option value="${x.id}"${e?.salaryGradeId===x.id?' selected':''}>${esc(x.code)} · ${esc(x.title)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Custom rate override (optional, uses the grade's pay basis)</label><input id="co" type="number" step="0.01" inputmode="decimal" value="${e?.customRateOverride??''}"><label class="l" style="margin-top:10px">Also allowed to clock in at (floating or relieving)</label><div class="days" id="ab">${branches.map(x=>`<label><input type="checkbox" value="${x.id}"${(e?.allowedBranchIds||[]).includes(x.id)?' checked':''}>${esc(x.name)}</label>`).join('')||'<small>Add branches first.</small>'}</div>
+ <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="cancelEmp()">Cancel</button>':''}</div>
  <div class="card"><h2>Employees</h2><div id="el">Loading…</div></div>`;
  const l=await employees();window._emps=l;
- $('#el').innerHTML=l.length?l.map(u=>`<div class="row"><div class="w"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${esc(u.start)}–${esc(u.end)}</small><div>${u.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div></div>
+ $('#el').innerHTML=l.length?l.map(u=>`<div class="row"><div class="w"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${esc(u.start)}–${esc(u.end)} · ${esc(grades.find(x=>x.id===u.salaryGradeId)?.code||'No grade')}</small><div>${u.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div></div>
  <button class="btn sm" onclick="editEmp('${u.uid}')">Edit</button><button class="btn sm del" onclick="delEmp('${u.uid}')">Remove</button></div>`).join(''):'<small>None yet.</small>'}
 W({editing:null,editEmp:id=>{editing=window._emps.find(u=>u.uid===id);empPane();scrollTo(0,0)},
  saveEmp:async()=>{const days=[...document.querySelectorAll('#d input:checked')].map(i=>+i.value),name=$('#n').value.trim(),start=$('#s').value,end=$('#en').value,er=$('#er');
@@ -293,7 +356,7 @@ W({editing:null,editEmp:id=>{editing=window._emps.find(u=>u.uid===id);empPane();
  delEmp:async id=>{if(!confirm('Remove this employee? They lose access immediately. Also delete their login in Firebase Console > Authentication.'))return;
   await deleteDoc(doc(db,'users',id));toast('Removed.');empPane()}});
 
-const bx=()=>({primaryBranchId:$('#pb').value,allowedBranchIds:[...document.querySelectorAll('#ab input:checked')].map(i=>i.value)});
+const bx=()=>({salaryGradeId:$('#sg').value,customRateOverride:$('#co').value===''?null:parseFloat($('#co').value),primaryBranchId:$('#pb').value,allowedBranchIds:[...document.querySelectorAll('#ab input:checked')].map(i=>i.value)});
 let eb=null;
 function facPane(){
  const r=rules,b=eb||{};
@@ -311,7 +374,7 @@ function facPane(){
  <div><label class="l">Radius (meters)</label><input id="br" type="number" value="${b.radius||50}"></div></div>
  <p style="color:var(--mute);font-size:.88rem">Standing at the branch? Capture its values:</p>
  <button class="btn" onclick="detIP()">Add my public IP</button> <button class="btn" onclick="detGPS()">Use my current location</button>
- <p class="err" id="fe"></p><button class="btn pri" onclick="saveBranch()">Save branch</button> ${eb?'<button class="btn" onclick="eb=null;facPane()">Cancel</button>':''}</div>
+ <p class="err" id="fe"></p><button class="btn pri" onclick="saveBranch()">Save branch</button> ${eb?'<button class="btn" onclick="cancelBr()">Cancel</button>':''}</div>
  <div class="card"><h2>Branches</h2>${branches.length?branches.map(x=>`<div class="row"><div class="w"><strong>${esc(x.name)}</strong><small>${esc(x.address)} · ${({either:'IP or GPS',both:'IP + GPS',ip:'IP only',gps:'GPS only'})[x.mode||rules.mode||'either']} · ${(x.officeIPs||[]).length} IP(s) · ${x.radius} m</small></div><button class="btn sm" onclick="editBr('${x.id}')">Edit</button><button class="btn sm del" onclick="delBr('${x.id}')">Delete</button></div>`).join(''):'<small>No branches yet.</small>'}</div>`}
 W({detIP:async()=>{try{const ip=await getIP(),el=$('#bi'),l=el.value.split(',').map(x=>x.trim()).filter(Boolean);if(!l.includes(ip))l.push(ip);el.value=l.join(', ')}catch(e){toast('Could not reach ipify.')}},
  detGPS:async()=>{try{const p=await getPos();$('#bla').value=p.coords.latitude.toFixed(6);$('#blo').value=p.coords.longitude.toFixed(6);toast('Location captured (±'+Math.round(p.coords.accuracy)+' m).')}catch(e){toast('Location denied or unavailable.')}},
