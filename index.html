@@ -383,13 +383,20 @@ function parseSheet(text){
  return[...byEmail.values()]}
 const impProblem=r=>!r.name?'No name':!/^\S+@\S+\.\S+$/.test(r.email)?'Invalid email':r.pw.length<6?'Phone number too short':!r.days.length?'No work days':!r.start||!r.end?'Missing time':r.end<=r.start?'End time is not after start time':!r.branch?'Choose a branch':'';
 function impDraw(){
- $('#imv').innerHTML=`<div class="scroll"><table class="pt"><thead><tr><th class="n">Employee</th><th>Password</th><th>Days</th><th>Start</th><th>End</th><th>Branch</th><th>Status</th></tr></thead><tbody>${imp.map((r,i)=>`<tr${impProblem(r)&&!r.status?' class="flag"':''}><td class="n">${esc(r.name)}<small style="display:block;font-weight:400">${esc(r.email)}</small></td><td>${esc(r.pw)}</td><td>${r.days.map(d=>DAYS[d]).join(' ')}</td><td><input type="time" value="${r.start}" onchange="impSet(${i},'start',this.value)"></td><td><input type="time" value="${r.end}" onchange="impSet(${i},'end',this.value)"></td><td><select onchange="impSet(${i},'branch',this.value)"><option value="">${esc(r.sheetBranch||'Select')}?</option>${branches.map(b=>`<option value="${b.id}"${r.branch===b.id?' selected':''}>${esc(b.name)}</option>`).join('')}</select></td><td style="text-align:left">${esc(r.status||impProblem(r)||'Ready')}</td></tr>`).join('')}</tbody></table></div>
- <button class="btn pri" style="margin-top:10px" id="imgo"${imp.some(r=>!r.status&&!impProblem(r))?'':' disabled'}>Create ${imp.filter(r=>!r.status&&!impProblem(r)).length} account(s)</button>`;
- $('#imgo').onclick=impRun}
-async function impRun(){
- const todo=imp.filter(r=>!r.status&&!impProblem(r));
- if(!confirm('Create '+todo.length+' employee account(s)?'))return;
- $('#imgo').disabled=true;
+ $('#imv').innerHTML=`<div class="scroll"><table class="pt"><thead><tr><th class="n">Employee</th><th>Password</th><th>Days</th><th>Start</th><th>End</th><th>Branch</th><th>Status</th><th></th></tr></thead><tbody>${imp.map((r,i)=>`<tr${impProblem(r)&&!r.status?' class="flag"':''}><td class="n">${esc(r.name)}<small style="display:block;font-weight:400">${esc(r.email)}</small></td><td>${esc(r.pw)}</td><td>${r.days.map(d=>DAYS[d]).join(' ')}</td><td><input type="time" value="${r.start}" onchange="impSet(${i},'start',this.value)"></td><td><input type="time" value="${r.end}" onchange="impSet(${i},'end',this.value)"></td><td><select onchange="impSet(${i},'branch',this.value)"><option value="">${esc(r.sheetBranch||'Select')}?</option>${branches.map(b=>`<option value="${b.id}"${r.branch===b.id?' selected':''}>${esc(b.name)}</option>`).join('')}</select></td><td style="text-align:left">${esc(r.status||impProblem(r)||'Ready')}</td><td>${!r.status&&!impProblem(r)?`<button class="btn sm pri" onclick="impApprove(${i})"${impBusy?' disabled':''}>Approve</button>`:''}</td></tr>`).join('')}</tbody></table></div>
+ <button class="btn pri" style="margin-top:10px" id="imgo"${!impBusy&&imp.some(r=>!r.status&&!impProblem(r))?'':' disabled'}>Approve all ready (${imp.filter(r=>!r.status&&!impProblem(r)).length})</button>`;
+ $('#imgo').onclick=()=>impRun(imp.filter(r=>!r.status&&!impProblem(r)))}
+let impBusy=false,sheetUrl='';
+const loadSheetUrl=async()=>{try{sheetUrl=(await getDoc(doc(db,'settings','sheet'))).data()?.url||''}catch(e){}if($('#imu'))$('#imu').value=sheetUrl};
+async function sheetCall(body){
+ if(!sheetUrl)throw new Error('Add the web app URL under Setup first.');
+ const res=await fetch(sheetUrl,{method:'POST',body:JSON.stringify({...body,token:await auth.currentUser.getIdToken()})});
+ const j=await res.json();if(!j.ok)throw new Error(j.error);return j}
+async function impRun(todo){
+ if(impBusy||!todo.length)return;
+ if(!confirm('Approve '+(todo.length===1?todo[0].name:todo.length+' employees')+'? This creates the account'+(sheetUrl?' and emails the login.':'. No email will be sent.')))return;
+ impBusy=true;impDraw();
+ try{
  const have=new Set((await employees()).map(u=>String(u.email).toLowerCase()));
  const sa=getAuth(initializeApp(cfg,'imp'+Date.now()));
  for(const r of todo){
@@ -397,14 +404,24 @@ async function impRun(){
   let user=null;
   try{user=(await createUserWithEmailAndPassword(sa,r.email,r.pw)).user;
    await setDoc(doc(db,'users',user.uid),{name:r.name,email:r.email,role:'employee',start:r.start,end:r.end,days:r.days,primaryBranchId:r.branch,allowedBranchIds:[],salaryGradeId:'',customRateOverride:null});
-   r.status='Created'}
+   r.status='Created';
+   if(sheetUrl){try{await sheetCall({action:'email',email:r.email,password:r.pw});r.status='Created and emailed'}catch(x){r.status='Created, email not confirmed: '+x.message}}
+   else r.status='Created, not emailed'}
   catch(x){if(user){try{await user.delete()}catch(e){}}
    r.status=x.code==='auth/email-already-in-use'?'Skipped: login already exists (check Firebase Authentication)':'Failed: '+(x.code||x.message)}
   try{await signOut(sa)}catch(e){}
   if($('#imv'))impDraw()}
- toast(todo.filter(r=>r.status==='Created').length+' account(s) created.');
+ toast(todo.filter(r=>r.status.startsWith('Created')).length+' account(s) created.');
+ }finally{impBusy=false}
  if(tab==='emp')empPane()}
-W({impPreview:()=>{const er=$('#ime');er.textContent='';try{imp=parseSheet($('#imt').value);impDraw()}catch(e){er.textContent=e.message}},
+W({impApprove:i=>impRun([imp[i]]),
+ impSaveUrl:async()=>{const u=$('#imu').value.trim(),er=$('#ime');er.textContent='';
+  if(u&&!/^https:\/\/script\.google\.com\/.+\/exec$/.test(u))return er.textContent='Paste the web app URL that ends in /exec.';
+  try{await setDoc(doc(db,'settings','sheet'),{url:u});sheetUrl=u;toast('Saved.')}catch(e){er.textContent='Could not save: '+(e.code||e.message)}},
+ impLoad:async()=>{const er=$('#ime');er.textContent='';if(impBusy)return;
+  try{await loadSheetUrl();const {rows}=await sheetCall({action:'list'});imp=parseSheet(rows.map(r=>r.join('\t')).join('\n'));
+   const have=new Set((await employees()).map(u=>String(u.email).toLowerCase()));
+   imp.forEach(r=>{if(have.has(r.email))r.status='Already in the app'});impDraw()}catch(e){er.textContent='Could not load: '+e.message}},
  impSet:(i,k,v)=>{imp[i][k]=v;impDraw()}});
 
 const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
@@ -418,9 +435,10 @@ async function empPane(){
  <div><label class="l">End time</label><input id="en" type="time" value="${e?.end||'17:00'}"></div></div>
  <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div><label class="l" style="margin-top:10px">Primary branch</label><select id="pb"><option value="">Select…</option>${branches.map(x=>`<option value="${x.id}"${e?.primaryBranchId===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Salary grade</label><select id="sg"><option value="">None (assign later)</option>${grades.map(x=>`<option value="${x.id}"${e?.salaryGradeId===x.id?' selected':''}>${esc(x.code)} · ${esc(x.title)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Custom rate override (optional, uses the grade's pay basis)</label><input id="co" type="number" step="0.01" inputmode="decimal" value="${e?.customRateOverride??''}"><label class="l" style="margin-top:10px">Also allowed to clock in at (floating or relieving)</label><div class="days" id="ab">${branches.map(x=>`<label><input type="checkbox" value="${x.id}"${(e?.allowedBranchIds||[]).includes(x.id)?' checked':''}>${esc(x.name)}</label>`).join('')||'<small>Add branches first.</small>'}</div>
  <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="cancelEmp()">Cancel</button>':''}</div>
- <div class="card"><h2>Import from Google Sheet</h2><p style="margin-top:0;color:var(--mute)">In your responses sheet, select the header row and employee rows, copy, then paste here. Each employee's password is their contact number in 05XXXXXXXX form (digits only).</p><textarea id="imt" rows="5" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:9px"></textarea><p class="err" id="ime"></p><button class="btn" onclick="impPreview()">Preview</button><div id="imv" style="margin-top:10px"></div></div>
+ <div class="card"><h2>New staff from Google Form</h2><p style="margin-top:0;color:var(--mute)">Load the form responses, check them, then Approve. Approving creates the account and emails the login. The password is the contact number (digits only).</p><button class="btn pri" onclick="impLoad()">Load form responses</button><p class="err" id="ime"></p><div id="imv"></div><details style="margin-top:10px"><summary>Setup: sheet connection</summary><label class="l" style="margin-top:8px">Apps Script web app URL</label><input id="imu" placeholder="https://script.google.com/macros/s/.../exec"><button class="btn sm" style="margin-top:8px" onclick="impSaveUrl()">Save URL</button></details></div>
  <div class="card"><h2>Employees</h2><div id="el">Loading…</div></div>`;
  if(imp.length)impDraw();
+ loadSheetUrl();
  const l=await employees();window._emps=l;
  $('#el').innerHTML=l.length?l.map(u=>`<div class="row"><div class="w"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${esc(u.start)}–${esc(u.end)} · ${esc(grades.find(x=>x.id===u.salaryGradeId)?.code||'No grade')}</small><div>${u.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div></div>
  <button class="btn sm" onclick="editEmp('${u.uid}')">Edit</button><button class="btn sm del" onclick="delEmp('${u.uid}')">Remove</button></div>`).join(''):'<small>None yet.</small>'}
