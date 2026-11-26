@@ -365,6 +365,48 @@ W({pmv:n=>{if(n>0){if(pc==='c1')pc='c2';else{pc='c1';pm=new Date(pm.getFullYear(
  setPc:k=>{pc=k;payPane()},
  expPayroll:()=>{const P=window._p;if(!P)return;dl(`payroll_${P.a}_to_${P.b}.csv`,[['Employee','Salary grade','Pay basis','Base rate','Daily rate','Hourly rate','Minute rate','Payable days/hours','Paid leave days','Net hours','Late minutes (unexcused)','Undertime minutes (unexcused)','Absent/LWOP days','Gross pay','Late deduction','Undertime deduction','Absent/LWOP deduction','Net pay'],...P.R.map(r=>r.flag?[r.name,'(none)','','','','','','','','','','','','','','','','']:[r.name,r.grade||'Override',r.basis,f2(r.rate),f2(r.daily),f2(r.hr),r.mr.toFixed(4),f2(r.payable),r.pl,r.net,r.late,r.under,r.absent,f2(r.gross),f2(r.ld),f2(r.ud),f2(r.ad),f2(r.total)])])}});
 
+/* ---------- Import from Google Sheet ---------- */
+let imp=[];
+const toPw=v=>{let d=String(v).replace(/[oO]/g,'0').replace(/\D/g,'');d=d.replace(/^(00)?971/,'0');if(d.length===9&&d[0]==='5')d='0'+d;return d};
+const to24=v=>{const m=String(v).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M)?$/i);if(!m)return'';let h=+m[1];if(m[3])h=h%12+(/p/i.test(m[3])?12:0);return h<24&&+m[2]<60?pad(h)+':'+m[2]:''};
+const key=v=>String(v).toLowerCase().replace(/branch|[^a-z]/g,'');
+const matchBranch=v=>{const k=key(v);return k?branches.find(b=>key(b.name).includes(k))?.id||'':''};
+function parseSheet(text){
+ const rows=text.split(/\r?\n/).filter(l=>l.trim()).map(l=>l.split('\t'));
+ if(rows.length<2)throw new Error('Paste the header row and at least one employee row.');
+ const h=rows[0].map(x=>x.trim().toLowerCase()),col=n=>{const i=h.findIndex(x=>x===n||x.startsWith(n+' -'));if(i<0)throw new Error('Column "'+n+'" not found. Include the header row.');return i};
+ const c={name:col('full name'),email:col('email'),phone:col('contact number'),branch:col('primary branch'),days:col('work day (select all that applies)'),start:col('start time'),end:col('end time')};
+ const alt=h.indexOf('email address'),byEmail=new Map();
+ rows.slice(1).forEach(r=>{const g=i=>(r[i]||'').trim(),email=(g(c.email)||(alt<0?'':g(alt))).toLowerCase();
+  byEmail.set(email||'row'+byEmail.size,{name:g(c.name).replace(/\s+/g,' '),email,pw:toPw(g(c.phone)),sheetBranch:g(c.branch),branch:matchBranch(g(c.branch)),
+   days:DAYS.map((d,i)=>g(c.days).toLowerCase().includes(d.toLowerCase())?i:-1).filter(i=>i>=0),start:to24(g(c.start)),end:to24(g(c.end))})});
+ return[...byEmail.values()]}
+const impProblem=r=>!r.name?'No name':!/^\S+@\S+\.\S+$/.test(r.email)?'Invalid email':r.pw.length<6?'Phone number too short':!r.days.length?'No work days':!r.start||!r.end?'Missing time':r.end<=r.start?'End time is not after start time':!r.branch?'Choose a branch':'';
+function impDraw(){
+ $('#imv').innerHTML=`<div class="scroll"><table class="pt"><thead><tr><th class="n">Employee</th><th>Password</th><th>Days</th><th>Start</th><th>End</th><th>Branch</th><th>Status</th></tr></thead><tbody>${imp.map((r,i)=>`<tr${impProblem(r)&&!r.status?' class="flag"':''}><td class="n">${esc(r.name)}<small style="display:block;font-weight:400">${esc(r.email)}</small></td><td>${esc(r.pw)}</td><td>${r.days.map(d=>DAYS[d]).join(' ')}</td><td><input type="time" value="${r.start}" onchange="impSet(${i},'start',this.value)"></td><td><input type="time" value="${r.end}" onchange="impSet(${i},'end',this.value)"></td><td><select onchange="impSet(${i},'branch',this.value)"><option value="">${esc(r.sheetBranch||'Select')}?</option>${branches.map(b=>`<option value="${b.id}"${r.branch===b.id?' selected':''}>${esc(b.name)}</option>`).join('')}</select></td><td style="text-align:left">${esc(r.status||impProblem(r)||'Ready')}</td></tr>`).join('')}</tbody></table></div>
+ <button class="btn pri" style="margin-top:10px" id="imgo"${imp.some(r=>!r.status&&!impProblem(r))?'':' disabled'}>Create ${imp.filter(r=>!r.status&&!impProblem(r)).length} account(s)</button>`;
+ $('#imgo').onclick=impRun}
+async function impRun(){
+ const todo=imp.filter(r=>!r.status&&!impProblem(r));
+ if(!confirm('Create '+todo.length+' employee account(s)?'))return;
+ $('#imgo').disabled=true;
+ const have=new Set((await employees()).map(u=>String(u.email).toLowerCase()));
+ const sa=getAuth(initializeApp(cfg,'imp'+Date.now()));
+ for(const r of todo){
+  if(have.has(r.email)){r.status='Skipped: already in the app';continue}
+  let user=null;
+  try{user=(await createUserWithEmailAndPassword(sa,r.email,r.pw)).user;
+   await setDoc(doc(db,'users',user.uid),{name:r.name,email:r.email,role:'employee',start:r.start,end:r.end,days:r.days,primaryBranchId:r.branch,allowedBranchIds:[],salaryGradeId:'',customRateOverride:null});
+   r.status='Created'}
+  catch(x){if(user){try{await user.delete()}catch(e){}}
+   r.status=x.code==='auth/email-already-in-use'?'Skipped: login already exists (check Firebase Authentication)':'Failed: '+(x.code||x.message)}
+  try{await signOut(sa)}catch(e){}
+  if($('#imv'))impDraw()}
+ toast(todo.filter(r=>r.status==='Created').length+' account(s) created.');
+ if(tab==='emp')empPane()}
+W({impPreview:()=>{const er=$('#ime');er.textContent='';try{imp=parseSheet($('#imt').value);impDraw()}catch(e){er.textContent=e.message}},
+ impSet:(i,k,v)=>{imp[i][k]=v;impDraw()}});
+
 const dayBoxes=(sel=[1,2,3,4,5])=>DAYS.map((d,i)=>`<label><input type="checkbox" value="${i}"${sel.includes(i)?' checked':''}>${d}</label>`).join('');
 async function empPane(){
  const e=editing;
@@ -376,7 +418,9 @@ async function empPane(){
  <div><label class="l">End time</label><input id="en" type="time" value="${e?.end||'17:00'}"></div></div>
  <label class="l" style="margin-top:10px">Work days</label><div class="days" id="d">${dayBoxes(e?.days)}</div><label class="l" style="margin-top:10px">Primary branch</label><select id="pb"><option value="">Select…</option>${branches.map(x=>`<option value="${x.id}"${e?.primaryBranchId===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Salary grade</label><select id="sg"><option value="">None (assign later)</option>${grades.map(x=>`<option value="${x.id}"${e?.salaryGradeId===x.id?' selected':''}>${esc(x.code)} · ${esc(x.title)}</option>`).join('')}</select><label class="l" style="margin-top:10px">Custom rate override (optional, uses the grade's pay basis)</label><input id="co" type="number" step="0.01" inputmode="decimal" value="${e?.customRateOverride??''}"><label class="l" style="margin-top:10px">Also allowed to clock in at (floating or relieving)</label><div class="days" id="ab">${branches.map(x=>`<label><input type="checkbox" value="${x.id}"${(e?.allowedBranchIds||[]).includes(x.id)?' checked':''}>${esc(x.name)}</label>`).join('')||'<small>Add branches first.</small>'}</div>
  <p class="err" id="er"></p><button class="btn pri" onclick="saveEmp()">${e?'Save changes':'Add employee'}</button> ${e?'<button class="btn" onclick="cancelEmp()">Cancel</button>':''}</div>
+ <div class="card"><h2>Import from Google Sheet</h2><p style="margin-top:0;color:var(--mute)">In your responses sheet, select the header row and employee rows, copy, then paste here. Each employee's password is their contact number in 05XXXXXXXX form (digits only).</p><textarea id="imt" rows="5" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:9px"></textarea><p class="err" id="ime"></p><button class="btn" onclick="impPreview()">Preview</button><div id="imv" style="margin-top:10px"></div></div>
  <div class="card"><h2>Employees</h2><div id="el">Loading…</div></div>`;
+ if(imp.length)impDraw();
  const l=await employees();window._emps=l;
  $('#el').innerHTML=l.length?l.map(u=>`<div class="row"><div class="w"><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${esc(u.start)}–${esc(u.end)} · ${esc(grades.find(x=>x.id===u.salaryGradeId)?.code||'No grade')}</small><div>${u.days.map(d=>`<span class="tag">${DAYS[d]}</span>`).join('')}</div></div>
  <button class="btn sm" onclick="editEmp('${u.uid}')">Edit</button><button class="btn sm del" onclick="delEmp('${u.uid}')">Remove</button></div>`).join(''):'<small>None yet.</small>'}
